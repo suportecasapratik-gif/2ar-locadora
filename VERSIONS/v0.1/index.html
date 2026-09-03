@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pátio — Entrar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="tela-login" class="tela-login">
+  <div class="login-card">
+    <div class="login-marca">
+      <span class="placa">PÁTIO</span>
+      <span class="login-sub">fiado · locação · venda</span>
+    </div>
+
+    <form id="form-login">
+      <label>Email<input type="email" id="login-email" required autocomplete="username" /></label>
+      <label>Senha<input type="password" id="login-senha" required autocomplete="current-password" /></label>
+      <p class="erro" id="login-erro"></p>
+      <button type="submit">Entrar</button>
+    </form>
+    <button class="link-btn" id="btn-mostrar-registro">Primeiro acesso? Criar conta</button>
+
+    <form id="form-registro" class="oculto">
+      <label>Nome completo<input type="text" id="reg-nome" required /></label>
+      <label>Email<input type="email" id="reg-email" required /></label>
+      <label>Senha<input type="password" id="reg-senha" required minlength="6" /></label>
+      <p class="erro" id="registro-erro"></p>
+      <button type="submit">Criar conta</button>
+      <button type="button" class="link-btn" id="btn-mostrar-login">Voltar para login</button>
+    </form>
+  </div>
+</div>
+
+<div id="toast" class="toast oculto"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<script>
+document.getElementById('btn-mostrar-registro').onclick = () => {
+  document.getElementById('form-login').classList.add('oculto');
+  document.getElementById('form-registro').classList.remove('oculto');
+};
+document.getElementById('btn-mostrar-login').onclick = () => {
+  document.getElementById('form-registro').classList.add('oculto');
+  document.getElementById('form-login').classList.remove('oculto');
+};
+
+document.getElementById('form-login').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('login-email').value.trim();
+  const senha = document.getElementById('login-senha').value;
+  const erroEl = document.getElementById('login-erro');
+  erroEl.textContent = '';
+  try {
+    await entrar(email, senha);
+    location.href = 'app.html';
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+});
+
+document.getElementById('form-registro').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const nome = document.getElementById('reg-nome').value.trim();
+  const email = document.getElementById('reg-email').value.trim();
+  const senha = document.getElementById('reg-senha').value;
+  const erroEl = document.getElementById('registro-erro');
+  erroEl.textContent = '';
+  try {
+    await cadastrar(nome, email, senha);
+    toast('Conta criada! Verifique seu email se a confirmação estiver ativada, ou faça login.');
+    document.getElementById('form-registro').classList.add('oculto');
+    document.getElementById('form-login').classList.remove('oculto');
+    document.getElementById('login-email').value = email;
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+});
+
+// Se já houver sessão válida, pula direto para o app.
+obterSessao().then(sessao => { if (sessao) location.href = 'app.html'; });
+</script>
+</body>
+</html>

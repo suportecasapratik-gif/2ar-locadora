@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pátio — Sistema</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+<div id="app" class="app">
+  <aside class="sidebar">
+    <div class="marca"><span class="placa">PÁTIO</span></div>
+    <nav>
+      <button class="nav-item ativo" data-view="dashboard">Painel</button>
+      <button class="nav-item" data-view="fiado">Fiado</button>
+      <button class="nav-item" data-view="locacoes">Locação</button>
+      <button class="nav-item" data-view="vendas">Venda</button>
+      <button class="nav-item" data-view="veiculos">Veículos</button>
+      <button class="nav-item" data-view="clientes">Clientes</button>
+      <button class="nav-item" data-view="usuarios" id="nav-usuarios">Equipe</button>
+    </nav>
+    <div class="sidebar-rodape">
+      <div id="usuario-info"></div>
+      <button id="btn-sair" class="link-btn">Sair</button>
+    </div>
+  </aside>
+
+  <main class="conteudo">
+    <div id="view-dashboard" class="view"></div>
+    <div id="view-fiado" class="view oculto"></div>
+    <div id="view-locacoes" class="view oculto"></div>
+    <div id="view-vendas" class="view oculto"></div>
+    <div id="view-veiculos" class="view oculto"></div>
+    <div id="view-clientes" class="view oculto"></div>
+    <div id="view-usuarios" class="view oculto"></div>
+  </main>
+</div>
+
+<div id="modal-fundo" class="modal-fundo oculto">
+  <div id="modal-conteudo" class="modal-conteudo"></div>
+</div>
+
+<div id="toast" class="toast oculto"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="js/supabaseClient.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/api.js"></script>
+<script src="js/views.js"></script>
+<script src="js/nav.js"></script>
+</body>
+</html>
