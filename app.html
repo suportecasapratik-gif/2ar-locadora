@@ -1,56 +1,975 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Pátio — Sistema</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="css/style.css" />
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Crediário — Painel</title>
+<link rel="stylesheet" href="css/style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
+<div class="app-shell">
 
-<div id="app" class="app">
-  <aside class="sidebar">
-    <div class="marca"><span class="placa">PÁTIO</span></div>
-    <nav>
-      <button class="nav-item ativo" data-view="dashboard">Painel</button>
-      <button class="nav-item" data-view="fiado">Fiado</button>
-      <button class="nav-item" data-view="locacoes">Locação</button>
-      <button class="nav-item" data-view="vendas">Venda</button>
-      <button class="nav-item" data-view="veiculos">Veículos</button>
-      <button class="nav-item" data-view="clientes">Clientes</button>
-      <button class="nav-item" data-view="usuarios" id="nav-usuarios">Equipe</button>
-    </nav>
-    <div class="sidebar-rodape">
-      <div id="usuario-info"></div>
-      <button id="btn-sair" class="link-btn">Sair</button>
+  <div class="mobile-topbar">
+    <button class="hamburger-btn" id="hamburger-btn">☰</button>
+    <span class="stamp-font">Carnê Digital</span>
+  </div>
+  <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <span class="stamp-font">Carnê Digital</span>
+      <span class="badge-live">● ao vivo</span>
     </div>
-  </aside>
 
-  <main class="conteudo">
-    <div id="view-dashboard" class="view"></div>
-    <div id="view-fiado" class="view oculto"></div>
-    <div id="view-locacoes" class="view oculto"></div>
-    <div id="view-vendas" class="view oculto"></div>
-    <div id="view-veiculos" class="view oculto"></div>
-    <div id="view-clientes" class="view oculto"></div>
-    <div id="view-usuarios" class="view oculto"></div>
+    <div id="meta-progresso" style="padding:14px 16px; border-bottom:1px solid var(--sidebar-border); display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span id="meta-nome" style="color:#fff; font-size:12px; font-weight:600;"></span>
+        <span id="meta-valores" style="color:var(--sidebar-text); font-size:11px;"></span>
+      </div>
+      <div style="background:var(--sidebar-bg-hover); border-radius:20px; height:8px; overflow:hidden;">
+        <div id="meta-barra" style="background:linear-gradient(90deg, var(--success), #34D399); height:100%; width:0%; transition:width .4s ease;"></div>
+      </div>
+    </div>
+
+    <div class="sidebar-scroll">
+      <div class="sidebar-group">
+        <button class="tab active" data-tab="dashboard"><span class="tab-ico">◆</span>Painel</button>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-label">Clientes</div>
+        <button class="tab" data-tab="clientes"><span class="tab-ico">●</span>Clientes</button>
+        <button class="tab" data-tab="cobrancas"><span class="tab-ico">●</span>Cobranças</button>
+        <button class="tab" data-tab="acordos"><span class="tab-ico">●</span>Acordos</button>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-label">Vendas</div>
+        <button class="tab" data-tab="operacoes"><span class="tab-ico">●</span>Operações</button>
+        <button class="tab" data-tab="estoque"><span class="tab-ico">●</span>Estoque</button>
+        <button class="tab" data-tab="entidades"><span class="tab-ico">●</span>PF / PJ</button>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-label">Financeiro</div>
+        <button class="tab" data-tab="financeiro"><span class="tab-ico">●</span>Movimentações</button>
+      </div>
+
+      <div class="sidebar-group">
+        <div class="sidebar-label">Outros</div>
+        <button class="tab" data-tab="documentos"><span class="tab-ico">●</span>Documentos</button>
+        <button class="tab" data-tab="mensagens"><span class="tab-ico">●</span>Mensagens</button>
+        <button class="tab" data-tab="lixeira"><span class="tab-ico">●</span>Lixeira</button>
+        <button class="tab" data-tab="configuracoes"><span class="tab-ico">●</span>Configurações</button>
+        <button class="tab" data-tab="equipe"><span class="tab-ico">●</span>Equipe</button>
+        <button class="tab" data-tab="funcionarios"><span class="tab-ico">●</span>Funcionários</button>
+      </div>
+
+      <!-- abas de cadastro: ficam escondidas do menu, abertas pelos botões "+" dentro de cada lista -->
+      <button class="tab sidebar-hidden-tab" data-tab="novo-cliente"></button>
+      <button class="tab sidebar-hidden-tab" data-tab="novo-produto"></button>
+      <button class="tab sidebar-hidden-tab" data-tab="novo-contrato"></button>
+      <button class="tab sidebar-hidden-tab" data-tab="nova-entidade"></button>
+      <button class="tab sidebar-hidden-tab" data-tab="novo-acordo"></button>
+    </div>
+
+    <button class="logout-btn" id="logout-btn">Sair</button>
+  </nav>
+
+  <main>
+
+    <!-- ================= DASHBOARD ================= -->
+    <section id="tab-dashboard">
+      <h2 class="section-title">Painel</h2>
+      <p class="section-desc">Visão geral, atualizada sozinha toda vez que você entra.</p>
+
+      <div id="dash-hoje-amanha"><div class="loading-line">Carregando...</div></div>
+
+      <div class="grid-cards" id="dash-cards">
+        <div class="loading-line">Carregando...</div>
+      </div>
+
+      <h2 class="section-title" style="margin-top:26px;">Indicadores (KPIs)</h2>
+      <div class="grid-cards" id="dash-kpis"></div>
+
+      <div class="filters" style="margin-top:16px;">
+        <label style="font-size:13px; color:var(--text-soft); align-self:center;">Gráficos de:</label>
+        <select id="filtro-dash-ano">
+          <option value="rolling">Últimos 6 meses</option>
+        </select>
+      </div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:20px;">
+        <div class="stat-card" style="padding:16px;">
+          <div class="label" style="margin-bottom:10px;">Faturamento — últimos 6 meses</div>
+          <canvas id="grafico-faturamento" height="180"></canvas>
+        </div>
+        <div class="stat-card" style="padding:16px;">
+          <div class="label" style="margin-bottom:10px;">Clientes novos — últimos 6 meses</div>
+          <canvas id="grafico-clientes-novos" height="180"></canvas>
+        </div>
+        <div class="stat-card" style="padding:16px;">
+          <div class="label" style="margin-bottom:10px;">Carteira por risco</div>
+          <canvas id="grafico-risco" height="180"></canvas>
+        </div>
+        <div class="stat-card" style="padding:16px;">
+          <div class="label" style="margin-bottom:10px;">Lucro por categoria</div>
+          <canvas id="grafico-categoria" height="180"></canvas>
+        </div>
+      </div>
+
+      <h2 class="section-title" style="margin-top:26px;">Vencendo nos próximos 7 dias</h2>
+      <div id="dash-proximos"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= CLIENTES ================= -->
+    <section id="tab-clientes" style="display:none;">
+      <h2 class="section-title">Clientes</h2>
+      <p class="section-desc">Todo mundo que já comprou fiado ou pegou empréstimo com você.</p>
+      <div class="filters">
+        <input type="text" id="busca-cliente" placeholder="Buscar por nome ou ID...">
+        <select id="ordenar-cliente">
+          <option value="nome_asc">Nome (A-Z)</option>
+          <option value="nome_desc">Nome (Z-A)</option>
+          <option value="codigo">Código</option>
+        </select>
+        <button class="btn btn-primary" type="button" id="btn-novo-cliente">+ Novo cliente</button>
+      </div>
+      <div id="lista-clientes"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= COBRANÇAS ================= -->
+    <section id="tab-cobrancas" style="display:none;">
+      <h2 class="section-title">Cobranças</h2>
+      <p class="section-desc">Por padrão mostra só quem está atrasado. Contato e link do WhatsApp já vêm prontos.</p>
+      <div class="filters">
+        <input type="text" id="filtro-cobranca-cliente" placeholder="Buscar cliente por nome ou ID...">
+        <select id="filtro-status">
+          <option value="atrasado">Só atrasadas</option>
+          <option value="todos">Todas em aberto</option>
+          <option value="pendente">Só no prazo</option>
+        </select>
+        <select id="filtro-cobrador">
+          <option value="todos">Qualquer cobrador</option>
+        </select>
+        <select id="filtro-tipo-cobranca">
+          <option value="todos">Presencial e online</option>
+          <option value="presencial">Só presencial</option>
+          <option value="online">Só online</option>
+        </select>
+      </div>
+      <div id="lista-cobrancas"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= OPERAÇÕES ================= -->
+    <section id="tab-operacoes" style="display:none;">
+      <h2 class="section-title">Operações</h2>
+      <p class="section-desc">Todas as vendas e empréstimos já cadastrados — clique em editar pra ajustar qualquer campo.</p>
+      <div class="filters">
+        <input type="text" id="filtro-operacao-cliente" placeholder="Buscar cliente por nome ou ID...">
+        <select id="filtro-operacao-status">
+          <option value="todos">Todos os status</option>
+          <option value="em_aberto">Em aberto</option>
+          <option value="atrasado">Atrasado</option>
+          <option value="agendado">Agendado</option>
+          <option value="pago">Pago</option>
+          <option value="cancelado">Cancelado</option>
+          <option value="acordo_feito">Acordo feito</option>
+        </select>
+        <select id="filtro-operacao-mes">
+          <option value="todos">Todos os meses</option>
+          <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
+          <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
+          <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
+          <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
+        </select>
+        <select id="filtro-operacao-ano">
+          <option value="todos">Todos os anos</option>
+        </select>
+        <button class="btn btn-primary" type="button" onclick="cancelarEdicaoOperacao(); document.getElementById('form-contrato').reset(); document.querySelector('[data-tab=novo-contrato]').click()">+ Nova operação</button>
+      </div>
+      <div id="lista-operacoes"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= ACORDOS ================= -->
+    <section id="tab-acordos" style="display:none;">
+      <h2 class="section-title">Acordos</h2>
+      <p class="section-desc">Alerta automático quando está em atraso ou quando é dia de pagamento do acordo.</p>
+      <div class="grid-cards" id="acordos-cards"></div>
+      <div class="filters">
+        <select id="filtro-acordo-mes">
+          <option value="todos">Todos os meses</option>
+          <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
+          <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
+          <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
+          <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
+        </select>
+        <select id="filtro-acordo-ano">
+          <option value="todos">Todos os anos</option>
+        </select>
+        <button class="btn btn-primary" type="button" onclick="cancelarEdicaoAcordo(); document.getElementById('form-acordo').reset(); document.querySelector('[data-tab=novo-acordo]').click()">+ Novo acordo</button>
+      </div>
+      <div id="lista-acordos"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= NOVO ACORDO ================= -->
+    <section id="tab-novo-acordo" style="display:none;">
+      <button class="btn-mini" type="button" onclick="voltarSubTela()" style="margin-bottom:14px;">← Voltar</button>
+      <h2 class="section-title" id="acr-form-title">Novo acordo</h2>
+      <p class="section-desc">Registra um acordo de pagamento com o cliente.</p>
+      <form class="form-card" id="form-acordo">
+        <input type="hidden" id="acr-editando-id" value="">
+        <div class="form-row">
+          <label>Cliente</label>
+          <select id="acr-cliente" required></select>
+        </div>
+        <div class="form-row">
+          <label>Operação relacionada (opcional)</label>
+          <select id="acr-contrato">
+            <option value="">— nenhuma —</option>
+          </select>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Data do acordo</label>
+            <input type="date" id="acr-data-acordo" required>
+          </div>
+          <div class="form-row">
+            <label>Data de vencimento</label>
+            <input type="date" id="acr-data-vencimento" required>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Valor do acordo (R$)</label>
+          <input type="number" step="0.01" id="acr-valor" required>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Tipo de acordo</label>
+            <select id="acr-tipo-acordo">
+              <option value="normal">Normal (à vista)</option>
+              <option value="parcelado">Parcelado</option>
+            </select>
+          </div>
+          <div class="form-row" id="linha-acr-num-parcelas" style="display:none;">
+            <label>Nº de parcelas</label>
+            <input type="number" id="acr-num-parcelas" value="2" min="2">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>PF / PJ responsável (obrigatório)</label>
+          <select id="acr-entidade" required>
+            <option value="" disabled selected>— escolha uma PF/PJ —</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Status</label>
+          <select id="acr-status">
+            <option value="pendente">Pendente</option>
+            <option value="pago">Pago</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>PF / PJ responsável</label>
+          <select id="acr-entidade" required>
+            <option value="" disabled selected>— escolha uma PF/PJ —</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Observações</label>
+          <textarea id="acr-obs" rows="2"></textarea>
+        </div>
+        <div id="acr-aviso-parcelado" class="empty-state" style="display:none; text-align:left; margin-bottom:16px;"></div>
+        <button class="btn btn-primary" type="submit" id="acr-submit-btn">Salvar acordo</button>
+        <button class="btn-mini" type="button" id="acr-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="acr-msg"></div>
+      </form>
+
+      <div id="bloco-parcelas-acordo" style="display:none; max-width:520px; margin-top:22px;">
+        <h2 class="section-title" style="font-size:16px;">Parcelas desse acordo</h2>
+        <p class="section-desc">Corrige data, valor ou desconto de cada parcela individualmente.</p>
+        <div id="lista-parcelas-acordo"></div>
+      </div>
+    </section>
+
+    <!-- ================= ESTOQUE ================= -->
+    <section id="tab-estoque" style="display:none;">
+      <h2 class="section-title">Estoque</h2>
+      <p class="section-desc">Produtos comprados pra revender fiado — status atualiza sozinho quando vende.</p>
+      <div class="filters">
+        <select id="filtro-estoque-status">
+          <option value="todos">Todos os status</option>
+          <option value="disponivel">Disponível</option>
+          <option value="agendado">Agendado</option>
+          <option value="em_analise">Em análise</option>
+          <option value="vendido">Vendido</option>
+        </select>
+        <button class="btn btn-primary" type="button" onclick="document.getElementById('form-produto').reset(); document.getElementById('prd-editando-id').value=''; document.getElementById('prd-form-title').textContent='Novo produto no estoque'; document.getElementById('prd-submit-btn').textContent='Salvar produto'; document.getElementById('prd-cancelar-edicao').style.display='none'; document.querySelector('[data-tab=novo-produto]').click()">+ Novo produto</button>
+      </div>
+      <div id="lista-estoque"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= FINANCEIRO ================= -->
+    <section id="tab-financeiro" style="display:none;">
+      <h2 class="section-title">Financeiro</h2>
+      <p class="section-desc">Entradas e saídas — as automáticas (parcela paga, compra de estoque) e as que você lança na mão.</p>
+      <div class="grid-cards" id="fin-cards">
+        <div class="loading-line">Carregando...</div>
+      </div>
+
+      <h2 class="section-title" style="margin-top:22px;" id="mov-form-title">Lançar movimentação manual</h2>
+      <form class="form-card" id="form-movimentacao" style="margin-bottom:22px;">
+        <input type="hidden" id="mov-editando-id" value="">
+        <div class="form-two">
+          <div class="form-row">
+            <label>Tipo</label>
+            <select id="mov-tipo">
+              <option value="entrada">Entrada</option>
+              <option value="saida">Saída</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Valor (R$)</label>
+            <input type="number" step="0.01" id="mov-valor" required>
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Data</label>
+            <input type="date" id="mov-data" required>
+          </div>
+          <div class="form-row">
+            <label>Hora</label>
+            <input type="time" id="mov-hora">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Categoria</label>
+            <input type="text" id="mov-categoria" placeholder="Ex: Estoque, Pedido agendado, Aluguel...">
+          </div>
+          <div class="form-row">
+            <label>Forma de pagamento</label>
+            <input type="hidden" id="mov-forma-pagamento" value="Pix" required>
+            <div id="botoes-forma-pagamento" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Conta / banco</label>
+            <input type="text" id="mov-conta" placeholder="Ex: Carteira, Nubank, PJ Loja X...">
+          </div>
+          <div class="form-row">
+            <label>PF / PJ responsável</label>
+            <select id="mov-entidade" required>
+              <option value="" disabled selected>— escolha uma PF/PJ —</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Descrição</label>
+          <textarea id="mov-descricao" rows="2"></textarea>
+        </div>
+        <button class="btn btn-primary" type="submit" id="mov-submit-btn">Lançar movimentação</button>
+        <button class="btn-mini" type="button" id="mov-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="mov-msg"></div>
+      </form>
+
+      <h2 class="section-title" style="margin-top:22px;">Movimentações recentes</h2>
+      <div class="filters">
+        <select id="filtro-mov-mes">
+          <option value="todos">Todos os meses</option>
+          <option value="0">Janeiro</option><option value="1">Fevereiro</option><option value="2">Março</option>
+          <option value="3">Abril</option><option value="4">Maio</option><option value="5">Junho</option>
+          <option value="6">Julho</option><option value="7">Agosto</option><option value="8">Setembro</option>
+          <option value="9">Outubro</option><option value="10">Novembro</option><option value="11">Dezembro</option>
+        </select>
+        <select id="filtro-mov-ano">
+          <option value="todos">Todos os anos</option>
+        </select>
+      </div>
+      <div id="filtro-mov-categorias" class="filters" style="flex-wrap:wrap;"></div>
+      <div id="lista-mov"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= PF / PJ ================= -->
+    <section id="tab-entidades" style="display:none;">
+      <h2 class="section-title">PF / PJ</h2>
+      <p class="section-desc">Cadastre aqui quem está operando cada venda — você como pessoa física ou uma das suas empresas.</p>
+      <div class="filters">
+        <button class="btn btn-primary" type="button" onclick="document.getElementById('lista-cnaes-form').innerHTML=''; cancelarEdicaoEntidade(); document.querySelector('[data-tab=nova-entidade]').click()">+ Nova PF/PJ</button>
+      </div>
+      <div id="lista-entidades"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= LIXEIRA ================= -->
+    <section id="tab-lixeira" style="display:none;">
+      <h2 class="section-title">Lixeira</h2>
+      <p class="section-desc">O que você excluiu fica guardado aqui — dá pra restaurar quando quiser.</p>
+      <div id="lista-lixeira"><div class="loading-line">Carregando...</div></div>
+
+      <h2 class="section-title" style="margin-top:26px;">Últimas alterações</h2>
+      <p class="section-desc">As 15 mudanças mais recentes em clientes, operações, estoque e acordos — dá pra desfazer qualquer uma.</p>
+      <div id="lista-historico"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= CONFIGURAÇÕES (META/RECOMPENSA) ================= -->
+    <section id="tab-configuracoes" style="display:none;">
+      <h2 class="section-title">Configurações</h2>
+      <p class="section-desc">Defina sua meta do mês — a barrinha lá em cima do menu acompanha sozinha.</p>
+      <form class="form-card" id="form-configuracoes">
+        <div class="form-row">
+          <label>Nome do objetivo</label>
+          <input type="text" id="cfg-nome" placeholder="Ex: Meta de agosto">
+        </div>
+        <div class="form-row">
+          <label>Valor do objetivo (R$)</label>
+          <input type="number" step="0.01" id="cfg-valor">
+        </div>
+        <div class="form-row">
+          <label>Foto da recompensa (opcional)</label>
+          <input type="file" id="cfg-foto" accept="image/*">
+        </div>
+        <div class="form-row">
+          <label>Cor da barrinha</label>
+          <input type="color" id="cfg-cor" value="#12B76A" style="height:42px; padding:4px;">
+        </div>
+        <button class="btn btn-primary" type="submit">Salvar</button>
+        <div class="form-msg" id="cfg-msg"></div>
+      </form>
+
+      <h2 class="section-title" style="margin-top:26px;">Como dividir o que entra</h2>
+      <p class="section-desc">
+        Defina em porcentagem o que fazer com o que você recebe (tem que somar 100%).
+        O Painel mostra automaticamente quanto disso é do mês atual.
+      </p>
+      <form class="form-card" id="form-alocacao">
+        <div class="form-two">
+          <div class="form-row">
+            <label>Despesas fixas (%)</label>
+            <input type="number" step="1" id="alc-despesas" value="30">
+          </div>
+          <div class="form-row">
+            <label>Reinvestir no negócio (%)</label>
+            <input type="number" step="1" id="alc-reinvestimento" value="30">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Pró-labore (você + funcionários) (%)</label>
+            <input type="number" step="1" id="alc-prolabore" value="30">
+          </div>
+          <div class="form-row">
+            <label>Reserva de emergência (%)</label>
+            <input type="number" step="1" id="alc-reserva" value="10">
+          </div>
+        </div>
+        <div id="alc-soma-aviso" class="form-msg"></div>
+        <button class="btn btn-primary" type="submit">Salvar divisão</button>
+        <div class="form-msg" id="alc-msg"></div>
+      </form>
+    </section>
+
+    <!-- ================= EQUIPE ================= -->
+    <section id="tab-equipe" style="display:none;">
+      <h2 class="section-title">Equipe</h2>
+      <p class="section-desc">
+        Quem tem acesso ao sistema e com qual permissão. Pra adicionar alguém novo:
+        1) cria o login da pessoa no Supabase (Authentication → Users → Add user);
+        2) volta aqui e clica em "Marcar como cobrador" do lado do nome dela.
+        Um cobrador só vê a aba Cobranças, e só as parcelas das operações
+        que você atribuir a ele (campo "Cobrador" ao criar/editar uma operação).
+      </p>
+      <div id="lista-equipe"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= FUNCIONÁRIOS ================= -->
+    <section id="tab-funcionarios" style="display:none;">
+      <h2 class="section-title">Funcionários</h2>
+      <p class="section-desc">Cadastro da equipe (diferente de login/acesso ao sistema — isso é a ficha de RH).</p>
+      <form class="form-card" id="form-funcionario" style="margin-bottom:22px;">
+        <input type="hidden" id="fnc-editando-id" value="">
+        <div class="form-row">
+          <label>Nome</label>
+          <input type="text" id="fnc-nome" required>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Salário (R$)</label>
+            <input type="number" step="0.01" id="fnc-salario">
+          </div>
+          <div class="form-row">
+            <label>Vínculo</label>
+            <select id="fnc-vinculo">
+              <option value="informal">Informal / de favor</option>
+              <option value="clt">CLT</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Data de entrada</label>
+            <input type="date" id="fnc-data-entrada">
+          </div>
+          <div class="form-row">
+            <label>Data de saída prevista (opcional)</label>
+            <input type="date" id="fnc-data-saida">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Observações</label>
+          <textarea id="fnc-obs" rows="2"></textarea>
+        </div>
+        <button class="btn btn-primary" type="submit" id="fnc-submit-btn">Salvar funcionário</button>
+        <button class="btn-mini" type="button" id="fnc-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="fnc-msg"></div>
+      </form>
+      <div id="lista-funcionarios"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= NOVA ENTIDADE (PF/PJ) ================= -->
+    <section id="tab-nova-entidade" style="display:none;">
+      <button class="btn-mini" type="button" onclick="voltarSubTela()" style="margin-bottom:14px;">← Voltar</button>
+      <h2 class="section-title" id="ent-form-title">Nova PF/PJ</h2>
+      <form class="form-card" id="form-entidade">
+        <input type="hidden" id="ent-editando-id" value="">
+        <div class="form-row">
+          <label>Tipo</label>
+          <select id="ent-tipo">
+            <option value="pf">Pessoa Física</option>
+            <option value="mei">MEI</option>
+            <option value="pj">PJ (empresa)</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Nome de identificação</label>
+          <input type="text" id="ent-nome" required placeholder="Ex: Eu - PF, Loja Fulano - MEI">
+        </div>
+        <div class="form-row">
+          <label>CPF ou CNPJ</label>
+          <input type="text" id="ent-documento">
+        </div>
+        <div class="form-row" id="linha-cnae" style="display:none;">
+          <label>CNAEs</label>
+          <div id="lista-cnaes-form"></div>
+          <button type="button" class="btn-mini" onclick="adicionarCampoCnae()" style="margin-top:6px;">+ Adicionar CNAE</button>
+        </div>
+        <div class="form-row" id="linha-aliquota" style="display:none;">
+          <label>Alíquota de imposto estimada (%)</label>
+          <input type="number" step="0.01" id="ent-aliquota" placeholder="Ex: 6 (Simples Nacional / MEI)">
+        </div>
+        <button class="btn btn-primary" type="submit" id="ent-submit-btn">Salvar</button>
+        <button class="btn-mini" type="button" id="ent-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="ent-msg"></div>
+      </form>
+    </section>
+
+    <!-- ================= NOVO PRODUTO (ESTOQUE) ================= -->
+    <section id="tab-novo-produto" style="display:none;">
+      <button class="btn-mini" type="button" onclick="voltarSubTela()" style="margin-bottom:14px;">← Voltar</button>
+      <h2 class="section-title" id="prd-form-title">Novo produto no estoque</h2>
+      <p class="section-desc">Ao salvar, o custo já é lançado como saída no financeiro sozinho.</p>
+      <form class="form-card" id="form-produto">
+        <input type="hidden" id="prd-editando-id" value="">
+        <div class="form-row">
+          <label>Produto</label>
+          <input type="text" id="prd-produto" required placeholder="Ex: iPhone 11 64GB">
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Categoria</label>
+            <input type="text" id="prd-categoria" placeholder="Ex: Celulares e Eletrônicos">
+          </div>
+          <div class="form-row">
+            <label>Ticket</label>
+            <select id="prd-ticket">
+              <option value="baixo">Baixo</option>
+              <option value="medio" selected>Médio</option>
+              <option value="alto">Alto</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Custo — quanto você pagou (R$)</label>
+            <input type="number" step="0.01" id="prd-custo" value="0" required>
+          </div>
+          <div class="form-row">
+            <label>Markup planejado (%)</label>
+            <input type="number" step="0.01" id="prd-markup">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Garantia (dias)</label>
+            <input type="number" id="prd-garantia" value="0">
+          </div>
+          <div class="form-row">
+            <label>Data de aquisição</label>
+            <input type="date" id="prd-data">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Status</label>
+          <select id="prd-status">
+            <option value="disponivel">Disponível</option>
+            <option value="agendado">Agendado</option>
+            <option value="em_analise">Em análise</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Origem do produto</label>
+          <select id="prd-origem">
+            <option value="estoque">Tenho em estoque</option>
+            <option value="parceria">É de parceria</option>
+            <option value="encomenda">Preciso encomendar</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Link (opcional)</label>
+          <input type="text" id="prd-link" placeholder="Link da loja/anúncio">
+        </div>
+        <div class="form-row">
+          <label>Link de vídeo (YouTube ou Google Drive)</label>
+          <input type="text" id="prd-video" placeholder="https://...">
+        </div>
+        <div class="form-row">
+          <label>Fotos do produto (até 6)</label>
+          <input type="file" id="prd-fotos" accept="image/*" multiple>
+        </div>
+        <div class="form-row">
+          <label>Descrição</label>
+          <textarea id="prd-descricao" rows="2"></textarea>
+        </div>
+        <button class="btn btn-primary" type="submit" id="prd-submit-btn">Salvar produto</button>
+        <button class="btn-mini" type="button" id="prd-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="prd-msg"></div>
+      </form>
+    </section>
+
+    <!-- ================= DOCUMENTOS ================= -->
+    <section id="tab-documentos" style="display:none;">
+      <h2 class="section-title">Documentos</h2>
+      <p class="section-desc">Organize em pastas — RG, comprovantes, fotos, o que quiser. Crie quantas subpastas precisar.</p>
+
+      <div class="filters" id="doc-breadcrumb" style="margin-bottom:14px;"></div>
+
+      <div class="filters">
+        <input type="text" id="doc-busca" placeholder="Buscar pasta ou arquivo por nome ou ID...">
+        <button class="btn-mini" id="doc-nova-pasta">📁 Nova pasta</button>
+        <label class="btn-mini" style="cursor:pointer;">
+          📎 Enviar arquivo
+          <input type="file" id="doc-input-arquivo" style="display:none;">
+        </label>
+      </div>
+
+      <div id="lista-documentos"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= NOVO CLIENTE (abre como janela) ================= -->
+    <section id="tab-novo-cliente" style="display:none;">
+      <div class="modal-box">
+        <button class="modal-close-btn" type="button" id="btn-fechar-modal-cliente" title="Fechar">✕</button>
+        <h2 class="section-title" id="cli-form-title">Novo cliente</h2>
+        <p class="section-desc">Cadastre nome e endereço — depois é só vincular um contrato a ele.</p>
+        <form class="form-card" id="form-cliente">
+        <input type="hidden" id="cli-editando-id" value="">
+        <div class="form-two">
+          <div class="form-row">
+            <label>ID do cliente</label>
+            <input type="text" id="cli-codigo" placeholder="Ex: CLI-001" required>
+          </div>
+          <div class="form-row">
+            <label>Data de cadastro</label>
+            <input type="date" id="cli-data-cadastro">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Nome completo</label>
+          <input type="text" id="cli-nome" required>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Quem indicou (opcional)</label>
+            <input type="text" id="cli-indicacao" placeholder="Nome de quem indicou esse cliente">
+          </div>
+          <div class="form-row">
+            <label>Classificação</label>
+            <select id="cli-classificacao">
+              <option value="padrao">Padrão</option>
+              <option value="bom_pagador">Bom pagador</option>
+              <option value="alto_risco">Alto risco</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Telefone</label>
+          <input type="text" id="cli-telefone" placeholder="(84) 9....">
+        </div>
+        <div class="form-row">
+          <label>Endereço</label>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="cli-endereco" placeholder="Rua, número, bairro" style="flex:1;">
+            <button type="button" class="btn-mini" onclick="abrirMapaEndereco()">📍 Ver no mapa</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>CPF (opcional)</label>
+          <input type="text" id="cli-cpf">
+        </div>
+        <div class="form-row">
+          <label>Observações</label>
+          <textarea id="cli-obs" rows="2"></textarea>
+        </div>
+        <div class="form-row">
+          <label>Foto do cliente</label>
+          <input type="file" id="cli-foto" accept="image/*">
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Documento — frente</label>
+            <input type="file" id="cli-doc-frente" accept="image/*,.pdf">
+          </div>
+          <div class="form-row">
+            <label>Documento — verso</label>
+            <input type="file" id="cli-doc-verso" accept="image/*,.pdf">
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Comprovante de energia</label>
+          <input type="file" id="cli-comprovante" accept="image/*,.pdf">
+        </div>
+        <button class="btn btn-primary" type="submit" id="cli-submit-btn">Salvar cliente</button>
+        <button class="btn-mini" type="button" id="cli-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="cli-msg"></div>
+        </form>
+      </div>
+    </section>
+
+    <!-- ================= NOVA OPERAÇÃO ================= -->
+    <section id="tab-novo-contrato" style="display:none;">
+      <button class="btn-mini" type="button" onclick="voltarSubTela()" style="margin-bottom:14px;">← Voltar</button>
+      <h2 class="section-title" id="ctr-form-title">Nova operação</h2>
+      <p class="section-desc">As parcelas, o lucro e a urgência são calculados sozinhos assim que você salvar.</p>
+      <form class="form-card" id="form-contrato">
+        <input type="hidden" id="ctr-editando-id" value="">
+        <div class="form-row">
+          <label>Cliente</label>
+          <select id="ctr-cliente" required></select>
+        </div>
+        <div class="form-row" id="linha-numero-venda" style="display:none;">
+          <label>ID da venda</label>
+          <input type="text" id="ctr-numero-venda">
+        </div>
+        <div class="form-row">
+          <label>Tipo</label>
+          <select id="ctr-tipo">
+            <option value="produto">Venda de produto (fiado)</option>
+            <option value="emprestimo">Empréstimo em dinheiro</option>
+          </select>
+        </div>
+        <div class="form-row" id="linha-estoque">
+          <label>Puxar do estoque (opcional)</label>
+          <select id="ctr-produto-estoque">
+            <option value="">— produto avulso, digitar abaixo —</option>
+          </select>
+        </div>
+        <div class="form-row" id="linha-produto">
+          <label>Produto</label>
+          <input type="text" id="ctr-produto" placeholder="Ex: iPhone 11 128GB">
+        </div>
+        <div class="form-row" id="linha-categoria">
+          <label>Categoria</label>
+          <input type="text" id="ctr-categoria" placeholder="Ex: Celulares e Eletrônicos">
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Valor total — o que o cliente vai pagar (R$)</label>
+            <input type="number" step="0.01" id="ctr-valor" required>
+          </div>
+          <div class="form-row" id="linha-custo">
+            <label>Custo — o que você pagou no produto (R$)</label>
+            <input type="number" step="0.01" id="ctr-custo" value="0">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Entrada (R$)</label>
+            <input type="number" step="0.01" id="ctr-entrada" value="0">
+          </div>
+          <div class="form-row">
+            <label>Desconto dado (R$)</label>
+            <input type="number" step="0.01" id="ctr-desconto" value="0">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Nº de parcelas</label>
+            <input type="number" id="ctr-parcelas" value="1" min="1" required>
+          </div>
+          <div class="form-row">
+            <label>Tipo de parcela</label>
+            <select id="ctr-tipo-parcela">
+              <option value="mensal">Mensal</option>
+              <option value="semanal">Semanal</option>
+              <option value="diaria">Diária</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Data da venda</label>
+            <input type="date" id="ctr-data" required>
+          </div>
+          <div class="form-row">
+            <label>Garantia (dias)</label>
+            <input type="number" id="ctr-garantia" value="0">
+          </div>
+        </div>
+        <div class="form-two">
+          <div class="form-row">
+            <label>Quem cobra (nome, livre)</label>
+            <input type="text" id="ctr-cobrador" value="Eu">
+          </div>
+          <div class="form-row">
+            <label>Tipo de cobrança</label>
+            <select id="ctr-tipo-cobranca">
+              <option value="presencial">Presencial</option>
+              <option value="online">Online</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Atribuir a um cobrador com login (opcional)</label>
+          <select id="ctr-cobrador-perfil">
+            <option value="">— sem atribuição, só eu vejo —</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>PF / PJ responsável (obrigatório)</label>
+          <select id="ctr-entidade" required>
+            <option value="" disabled selected>— escolha uma PF/PJ —</option>
+          </select>
+        </div>
+        <div class="form-row" id="linha-status-operacao" style="display:none;">
+          <label>Status</label>
+          <select id="ctr-status">
+            <option value="em_aberto">Em aberto</option>
+            <option value="agendado">Agendado</option>
+            <option value="pago">Pago</option>
+            <option value="cancelado">Cancelado</option>
+            <option value="acordo_feito">Acordo feito</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Observações</label>
+          <textarea id="ctr-obs" rows="2"></textarea>
+        </div>
+        <div id="ctr-preview" class="empty-state" style="text-align:left; margin-bottom:16px; display:none;"></div>
+        <button class="btn btn-primary" type="submit" id="ctr-submit-btn">Salvar operação</button>
+        <button class="btn-mini" type="button" id="ctr-cancelar-edicao" style="display:none; margin-left:8px;">Cancelar edição</button>
+        <div class="form-msg" id="ctr-msg"></div>
+      </form>
+
+      <div id="bloco-parcelas-operacao" style="display:none; max-width:520px; margin-top:22px;">
+        <h2 class="section-title" style="font-size:16px;">Parcelas dessa operação</h2>
+        <p class="section-desc">Corrige data, valor ou desconto de cada parcela individualmente.</p>
+        <div id="lista-parcelas-operacao"></div>
+      </div>
+    </section>
+
+    <!-- ================= MENSAGENS PRONTAS ================= -->
+    <section id="tab-mensagens" style="display:none;">
+      <h2 class="section-title">Mensagens prontas</h2>
+      <p class="section-desc">Edite como quiser — fica salvo pra próxima vez. "Copiar" cola em qualquer lugar; "Enviar" já abre o WhatsApp certo com a mensagem pronta.</p>
+
+      <form class="form-card" id="form-nova-mensagem" style="margin-bottom:22px;">
+        <div class="form-row">
+          <label>Nome da mensagem</label>
+          <input type="text" id="nmsg-nome" required placeholder="Ex: Aviso de atraso 2 dias">
+        </div>
+        <div class="form-row">
+          <label>Texto</label>
+          <textarea id="nmsg-texto" rows="3" required></textarea>
+        </div>
+        <div class="form-row">
+          <label>Anexos (fotos, vídeos, áudios ou documentos — quantos quiser)</label>
+          <input type="file" id="nmsg-anexos" multiple>
+        </div>
+        <button class="btn btn-primary" type="submit">+ Adicionar mensagem</button>
+        <div class="form-msg" id="nmsg-msg"></div>
+      </form>
+
+      <div id="lista-mensagens"><div class="loading-line">Carregando...</div></div>
+    </section>
+
+    <!-- ================= JANELA: ENVIAR MENSAGEM ================= -->
+    <div id="modal-enviar-mensagem" style="display:none; position:fixed; inset:0; background:rgba(16,24,40,0.6); z-index:600; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:var(--surface); border-radius:var(--radius); padding:24px; max-width:420px; width:100%; position:relative;">
+        <button class="modal-close-btn" type="button" onclick="fecharModalEnviar()">✕</button>
+        <h2 class="section-title">Enviar mensagem</h2>
+        <div class="form-row">
+          <label>Cliente cadastrado (opcional)</label>
+          <select id="env-cliente">
+            <option value="">— escolher da lista —</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Ou digite o telefone</label>
+          <input type="text" id="env-telefone" placeholder="(84) 9....">
+        </div>
+        <button class="btn btn-primary" type="button" onclick="confirmarEnvioMensagem()">Abrir no WhatsApp</button>
+      </div>
+    </div>
+
+    <!-- ================= JANELA: REGISTRAR TENTATIVA DE COBRANÇA ================= -->
+    <div id="modal-tentativa" style="display:none; position:fixed; inset:0; background:rgba(16,24,40,0.6); z-index:600; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:var(--surface); border-radius:var(--radius); padding:24px; max-width:420px; width:100%; position:relative;">
+        <button class="modal-close-btn" type="button" onclick="fecharModalTentativa()">✕</button>
+        <h2 class="section-title">Registrar tentativa de cobrança</h2>
+        <input type="hidden" id="tnt-parcela-id" value="">
+        <div class="form-row">
+          <label>Resultado</label>
+          <select id="tnt-resultado">
+            <option value="pagou">Pagou</option>
+            <option value="prometeu_pagar">Prometeu pagar</option>
+            <option value="nao_pagou">Não pagou</option>
+            <option value="nao_encontrado">Não encontrado</option>
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Observação</label>
+          <textarea id="tnt-observacao" rows="2" placeholder="Ex: disse que paga sexta-feira"></textarea>
+        </div>
+        <button class="btn btn-primary" type="button" onclick="salvarTentativa()">Salvar tentativa</button>
+      </div>
+    </div>
+
+    <!-- ================= JANELA: REGISTRAR PAGAMENTO (total ou parcial) ================= -->
+    <div id="modal-pagamento" style="display:none; position:fixed; inset:0; background:rgba(16,24,40,0.6); z-index:600; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:var(--surface); border-radius:var(--radius); padding:24px; max-width:420px; width:100%; position:relative;">
+        <button class="modal-close-btn" type="button" onclick="fecharModalPagamento()">✕</button>
+        <h2 class="section-title">Registrar pagamento</h2>
+        <p class="section-desc" id="pgto-restante-texto"></p>
+        <input type="hidden" id="pgto-parcela-id" value="">
+        <div class="form-row">
+          <label>Valor recebido agora (R$)</label>
+          <input type="number" step="0.01" id="pgto-valor">
+        </div>
+        <p class="section-desc">Se for menos que o valor total, o resto continua em aberto até quitar.</p>
+        <button class="btn btn-primary" type="button" onclick="confirmarPagamento()">Confirmar pagamento</button>
+      </div>
+    </div>
+
   </main>
 </div>
 
-<div id="modal-fundo" class="modal-fundo oculto">
-  <div id="modal-conteudo" class="modal-conteudo"></div>
-</div>
-
-<div id="toast" class="toast oculto"></div>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="js/supabaseClient.js"></script>
-<script src="js/utils.js"></script>
-<script src="js/auth.js"></script>
-<script src="js/api.js"></script>
-<script src="js/views.js"></script>
-<script src="js/nav.js"></script>
+<script src="js/config.js"></script>
+<script src="js/app.js"></script>
 </body>
 </html>
