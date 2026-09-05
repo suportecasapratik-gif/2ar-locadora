@@ -64,8 +64,10 @@ window.voltarSubTela = voltarSubTela;
 const tabs = document.querySelectorAll(".tab");
 const sections = {
   dashboard: document.getElementById("tab-dashboard"),
+  agenda: document.getElementById("tab-agenda"),
   clientes: document.getElementById("tab-clientes"),
   cobrancas: document.getElementById("tab-cobrancas"),
+  "cobranca-presencial": document.getElementById("tab-cobranca-presencial"),
   operacoes: document.getElementById("tab-operacoes"),
   acordos: document.getElementById("tab-acordos"),
   estoque: document.getElementById("tab-estoque"),
@@ -73,6 +75,9 @@ const sections = {
   entidades: document.getElementById("tab-entidades"),
   lixeira: document.getElementById("tab-lixeira"),
   documentos: document.getElementById("tab-documentos"),
+  configuracoes: document.getElementById("tab-configuracoes"),
+  equipe: document.getElementById("tab-equipe"),
+  funcionarios: document.getElementById("tab-funcionarios"),
   "novo-cliente": document.getElementById("tab-novo-cliente"),
   "novo-produto": document.getElementById("tab-novo-produto"),
   "novo-contrato": document.getElementById("tab-novo-contrato"),
@@ -106,6 +111,8 @@ tabs.forEach(tab => {
     if (tab.dataset.tab === "novo-contrato") { loadClientesNoSelect(); loadEstoqueNoSelect(); loadCobradoresNoSelect(); }
     if (tab.dataset.tab === "equipe") loadEquipe();
     if (tab.dataset.tab === "funcionarios") loadFuncionarios();
+    if (tab.dataset.tab === "agenda") loadAgenda();
+    if (tab.dataset.tab === "cobranca-presencial") loadCobrancaPresencial();
     if (tab.dataset.tab === "mensagens") loadMensagens();
     if (tab.dataset.tab === "acordos") loadAcordos();
     if (tab.dataset.tab === "operacoes") loadOperacoes();
@@ -311,6 +318,16 @@ async function loadDashboard() {
     blocoHojeAmanha.innerHTML += `
       <div class="empty-state" style="border-color:var(--warning); text-align:left; margin-bottom:20px;">
         ⚠️ <b>Aviso de equipe:</b> ${funcionariosSaindo.map(f => `${f.nome} (saída prevista ${fmtData(f.data_saida_prevista)})`).join(", ")}
+      </div>`;
+  }
+
+  // ---------- agenda de hoje ----------
+  const { data: agendaHoje } = await supabaseClient.from("agenda")
+    .select("titulo,hora").eq("excluido", false).eq("status", "pendente").eq("data", hoje);
+  if (agendaHoje && agendaHoje.length > 0) {
+    blocoHojeAmanha.innerHTML += `
+      <div class="empty-state" style="border-color:var(--primary); text-align:left; margin-bottom:20px;">
+        📅 <b>Na sua agenda hoje:</b> ${agendaHoje.map(a => `${a.titulo}${a.hora ? " (" + a.hora.slice(0, 5) + ")" : ""}`).join(", ")}
       </div>`;
   }
 
@@ -612,7 +629,7 @@ async function loadClientes(filtro = "") {
   }
 
   const { data: contratos } = await supabaseClient.from("operacoes_status").select("*");
-  const { data: parcelas } = await supabaseClient.from("parcelas_status").select("cliente_id,status_real");
+  const { data: parcelas } = await supabaseClient.from("parcelas_status").select("cliente_id,status_real,status,valor,valor_pago,data_pagamento");
 
   const CLASS_LABEL = { alto_risco: "Alto risco", bom_pagador: "Bom pagador", padrao: "Padrão" };
   const STATUS_LABEL = { em_aberto: "Em aberto", agendado: "Agendado", pago: "Pago", cancelado: "Cancelado", acordo_feito: "Acordo feito", atrasado: "Atrasado" };
@@ -631,6 +648,14 @@ async function loadClientes(filtro = "") {
     const emAtraso = (parcelas || []).some(p => p.cliente_id === c.id && p.status_real === "atrasado");
     const emAberto = !emAtraso && meusContratos.some(ct => ["em_aberto", "agendado"].includes(ct.status_real));
     const classe = c.classificacao || "padrao";
+
+    const parcelasDoCliente = (parcelas || []).filter(p => p.cliente_id === c.id);
+    const totalComprado = meusContratos.reduce((s, ct) => s + Number(ct.valor_total), 0);
+    const totalPago = parcelasDoCliente.reduce((s, p) => s + Number(p.valor_pago || (p.status === "pago" ? p.valor : 0)), 0);
+    const totalEmAberto = parcelasDoCliente.filter(p => ["pendente", "parcial"].includes(p.status))
+      .reduce((s, p) => s + (Number(p.valor) - Number(p.valor_pago || 0)), 0);
+    const totalAtrasado = parcelasDoCliente.filter(p => p.status_real === "atrasado")
+      .reduce((s, p) => s + (Number(p.valor) - Number(p.valor_pago || 0)), 0);
 
     return `
       <div class="ficha">
@@ -2834,6 +2859,146 @@ async function editarFuncionario(id) {
   document.getElementById("fnc-cancelar-edicao").style.display = "inline-block";
 }
 window.editarFuncionario = editarFuncionario;
+
+// ============================================================
+// AGENDA
+// ============================================================
+document.getElementById("agd-data").value = new Date().toISOString().slice(0, 10);
+
+async function loadAgendaClientesNoSelect() {
+  const sel = document.getElementById("agd-cliente");
+  const { data } = await supabaseClient.from("clientes").select("id,nome").eq("excluido", false).order("nome");
+  sel.innerHTML = `<option value="">— nenhum —</option>` + (data || []).map(c => `<option value="${c.id}">${c.nome}</option>`).join("");
+}
+
+async function loadAgenda() {
+  await loadAgendaClientesNoSelect();
+  const el = document.getElementById("lista-agenda");
+  el.innerHTML = `<div class="loading-line">Carregando...</div>`;
+
+  const filtro = document.getElementById("filtro-agenda").value;
+  let query = supabaseClient.from("agenda").select("*, clientes(nome)").eq("excluido", false).order("data").order("hora");
+  if (filtro === "pendentes") query = query.eq("status", "pendente");
+  const { data, error } = await query;
+
+  if (error) { el.innerHTML = `<div class="loading-line">Erro: ${error.message}</div>`; return; }
+  if (!data || data.length === 0) { el.innerHTML = `<div class="empty-state">Nada na agenda com esse filtro.</div>`; return; }
+
+  const hoje = new Date().toISOString().slice(0, 10);
+  el.innerHTML = data.map(a => `
+    <div class="ficha">
+      <div class="ficha-top">
+        <div>
+          <div class="ficha-nome" style="${a.status === "feito" ? "text-decoration:line-through; color:var(--text-soft);" : ""}">${a.titulo}</div>
+          <div class="ficha-meta">
+            ${fmtData(a.data)}${a.hora ? " às " + a.hora.slice(0, 5) : ""}
+            ${a.clientes?.nome ? " · cliente: " + a.clientes.nome : ""}
+            ${a.descricao ? " · " + a.descricao : ""}
+          </div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          ${a.data === hoje && a.status === "pendente" ? `<span class="stamp stamp-atrasado">Hoje</span>` : ""}
+          ${a.status === "pendente" ? `<button class="btn-mini green" onclick="marcarAgendaFeito('${a.id}')">✓ Feito</button>` : ""}
+          <button class="btn-mini" onclick="editarAgenda('${a.id}')">✏️</button>
+          <button class="btn-mini red" onclick="excluirRegistro('agenda','${a.id}', loadAgenda)">🗑️</button>
+        </div>
+      </div>
+    </div>
+  `).join("");
+}
+
+document.getElementById("filtro-agenda").addEventListener("change", loadAgenda);
+
+async function marcarAgendaFeito(id) {
+  const { error } = await supabaseClient.from("agenda").update({ status: "feito" }).eq("id", id);
+  if (error) { alert("Erro: " + error.message); return; }
+  loadAgenda();
+  loadDashboard();
+}
+window.marcarAgendaFeito = marcarAgendaFeito;
+
+document.getElementById("form-agenda").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const msg = document.getElementById("agd-msg");
+  const editandoId = document.getElementById("agd-editando-id").value;
+  const dados = {
+    titulo: document.getElementById("agd-titulo").value.trim(),
+    data: document.getElementById("agd-data").value,
+    hora: document.getElementById("agd-hora").value || null,
+    cliente_id: document.getElementById("agd-cliente").value || null,
+    descricao: document.getElementById("agd-descricao").value.trim() || null,
+  };
+  let error;
+  if (editandoId) {
+    ({ error } = await supabaseClient.from("agenda").update(dados).eq("id", editandoId));
+  } else {
+    ({ error } = await supabaseClient.from("agenda").insert(dados));
+  }
+  if (error) { msg.textContent = "Erro: " + error.message; msg.className = "form-msg err"; return; }
+  msg.textContent = editandoId ? "Alterações salvas!" : "Adicionado à agenda!";
+  msg.className = "form-msg ok";
+  e.target.reset();
+  document.getElementById("agd-data").value = new Date().toISOString().slice(0, 10);
+  cancelarEdicaoAgenda();
+  loadAgenda();
+  loadDashboard();
+});
+
+function cancelarEdicaoAgenda() {
+  document.getElementById("agd-editando-id").value = "";
+  document.getElementById("agd-submit-btn").textContent = "Adicionar à agenda";
+  document.getElementById("agd-cancelar-edicao").style.display = "none";
+}
+document.getElementById("agd-cancelar-edicao").addEventListener("click", () => {
+  document.getElementById("form-agenda").reset();
+  cancelarEdicaoAgenda();
+});
+
+async function editarAgenda(id) {
+  const { data: a, error } = await supabaseClient.from("agenda").select("*").eq("id", id).single();
+  if (error || !a) { alert("Não consegui carregar."); return; }
+  document.getElementById("agd-editando-id").value = a.id;
+  document.getElementById("agd-titulo").value = a.titulo || "";
+  document.getElementById("agd-data").value = a.data;
+  document.getElementById("agd-hora").value = a.hora ? a.hora.slice(0, 5) : "";
+  document.getElementById("agd-cliente").value = a.cliente_id || "";
+  document.getElementById("agd-descricao").value = a.descricao || "";
+  document.getElementById("agd-submit-btn").textContent = "Salvar alterações";
+  document.getElementById("agd-cancelar-edicao").style.display = "inline-block";
+}
+window.editarAgenda = editarAgenda;
+
+// ============================================================
+// COBRANÇA PRESENCIAL (visão dedicada, separada de Cobranças)
+// ============================================================
+async function loadCobrancaPresencial() {
+  const el = document.getElementById("lista-cobranca-presencial");
+  el.innerHTML = `<div class="loading-line">Carregando...</div>`;
+
+  const [{ data: parcelas, error }, { data: acordos }] = await Promise.all([
+    supabaseClient.from("parcelas_status").select("*").in("status", ["pendente", "parcial"])
+      .eq("tipo_cobranca", "presencial").order("vencimento"),
+    supabaseClient.from("acordos_status").select("cliente_id").eq("excluido", false),
+  ]);
+
+  if (error) { el.innerHTML = `<div class="loading-line">Erro: ${error.message}</div>`; return; }
+  if (!parcelas || parcelas.length === 0) { el.innerHTML = `<div class="empty-state">Nada de cobrança presencial pendente. 🎉</div>`; return; }
+
+  const clientesComAcordo = new Set((acordos || []).map(a => a.cliente_id));
+
+  el.innerHTML = parcelas.map(p => `
+    <div class="parcela-row">
+      <div class="who">
+        <div class="n">${p.cliente_nome} <span class="mono" style="font-weight:400; font-size:12px; color:var(--text-soft);">${p.cliente_codigo || ""}</span> <span class="stamp stamp-${p.status_real}" style="transform:none;">${p.status_real}</span></div>
+        <div class="m">📍 ${p.cliente_endereco || "sem endereço"} · 📞 ${p.cliente_telefone || "sem telefone"}</div>
+        <div class="m">${clientesComAcordo.has(p.cliente_id) ? "✅ já tem acordo feito" : "— sem acordo ainda"}</div>
+      </div>
+      <div class="venc">vence ${fmtData(p.vencimento)}</div>
+      <div class="val">${fmtMoeda(Number(p.valor) - Number(p.valor_pago || 0))}</div>
+      <button class="btn-mini green" onclick="abrirModalPagamento('${p.id}', ${Number(p.valor) - Number(p.valor_pago || 0)})">💰 Pagamento</button>
+    </div>
+  `).join("");
+}
 
 async function mudarPapel(id, novoPapel) {
   if (!confirm(`Mudar essa pessoa pra "${novoPapel}"?`)) return;
