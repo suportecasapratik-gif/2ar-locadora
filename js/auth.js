@@ -40,6 +40,28 @@ async function sair() {
   location.href = 'index.html';
 }
 
+// Envia o email de redefinição de senha. O link do email traz a pessoa de volta
+// para index.html já autenticada em modo "recovery" (ver escutarRecuperacaoSenha).
+async function recuperarSenha(email) {
+  const redirectTo = location.origin + location.pathname.replace(/[^/]*$/, '') + 'index.html';
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw new Error(traduzErroAuth(error.message));
+}
+
+// Define a nova senha depois que a pessoa clicou no link do email.
+async function definirNovaSenha(novaSenha) {
+  const { error } = await sb.auth.updateUser({ password: novaSenha });
+  if (error) throw new Error(traduzErroAuth(error.message));
+}
+
+// Chame isso na página de login: dispara o callback quando o Supabase detecta
+// que a pessoa chegou através do link de recuperação de senha.
+function escutarRecuperacaoSenha(callback) {
+  sb.auth.onAuthStateChange((evento) => {
+    if (evento === 'PASSWORD_RECOVERY') callback();
+  });
+}
+
 function traduzErroAuth(msg) {
   const mapa = {
     'Invalid login credentials': 'Email ou senha incorretos.',
