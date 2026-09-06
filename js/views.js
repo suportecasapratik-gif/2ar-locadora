@@ -671,14 +671,37 @@ async function carregarUsuarios() {
     </div>
     <p class="sub" style="margin-bottom:16px">
       Para adicionar um funcionário, peça para ele criar a própria conta na tela de login
-      ("Primeiro acesso"). Ele entra automaticamente como funcionário — você pode promovê-lo
-      a administrador depois, editando a tabela <code>perfis</code> no painel do Supabase.
+      ("Primeiro acesso"). Ele entra automaticamente como funcionário — use o botão abaixo
+      pra promover a administrador quando quiser.
     </p>
-    <div class="tabela-wrap"><table><thead><tr><th>Nome</th><th>Papel</th><th>Desde</th></tr></thead><tbody id="tbody-usuarios"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Nome</th><th>Papel</th><th>Desde</th><th></th></tr></thead><tbody id="tbody-usuarios"></tbody></table></div>
   `;
+  await renderUsuarios();
+}
+async function renderUsuarios() {
   try {
     const lista = await perfisApi.listar();
     document.getElementById('tbody-usuarios').innerHTML = lista.map(u => `
-      <tr><td>${u.nome}</td><td>${u.papel === 'admin' ? 'Administrador' : 'Funcionário'}</td><td>${dataBr(u.criado_em)}</td></tr>`).join('');
+      <tr>
+        <td>${u.nome}</td>
+        <td><span class="tag ${u.papel === 'admin' ? 'tag-quitado' : 'tag-aberto'}">${u.papel === 'admin' ? 'Administrador' : 'Funcionário'}</span></td>
+        <td>${dataBr(u.criado_em)}</td>
+        <td>${u.id === PERFIL.id
+          ? '<span class="sub">Você</span>'
+          : `<button class="btn-secundario" onclick="alternarPapel('${u.id}', '${u.papel}')">${u.papel === 'admin' ? 'Rebaixar a funcionário' : 'Promover a admin'}</button>`}
+        </td>
+      </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function alternarPapel(id, papelAtual) {
+  const novoPapel = papelAtual === 'admin' ? 'funcionario' : 'admin';
+  const confirmacao = novoPapel === 'admin'
+    ? 'Promover este usuário a administrador? Ele passará a ver e editar tudo, inclusive a equipe.'
+    : 'Rebaixar este administrador a funcionário comum?';
+  if (!confirm(confirmacao)) return;
+  try {
+    await perfisApi.atualizarPapel(id, novoPapel);
+    toast('Papel atualizado.');
+    renderUsuarios();
   } catch (err) { toast(err.message, true); }
 }
