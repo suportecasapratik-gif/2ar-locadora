@@ -24,6 +24,21 @@
       <button type="submit">Entrar</button>
     </form>
     <button class="link-btn" id="btn-mostrar-registro">Primeiro acesso? Criar conta</button>
+    <button class="link-btn" id="btn-mostrar-recuperar">Esqueci minha senha</button>
+
+    <form id="form-recuperar" class="oculto">
+      <label>Email da sua conta<input type="email" id="rec-email" required /></label>
+      <p class="erro" id="recuperar-erro"></p>
+      <button type="submit">Enviar link de redefinição</button>
+      <button type="button" class="link-btn" id="btn-recuperar-voltar">Voltar para login</button>
+    </form>
+
+    <form id="form-nova-senha" class="oculto">
+      <p class="login-sub" style="margin-bottom:6px">Digite sua nova senha</p>
+      <label>Nova senha<input type="password" id="nova-senha" required minlength="6" /></label>
+      <p class="erro" id="nova-senha-erro"></p>
+      <button type="submit">Salvar nova senha</button>
+    </form>
 
     <form id="form-registro" class="oculto">
       <label>Nome completo<input type="text" id="reg-nome" required /></label>
@@ -51,6 +66,52 @@ document.getElementById('btn-mostrar-login').onclick = () => {
   document.getElementById('form-registro').classList.add('oculto');
   document.getElementById('form-login').classList.remove('oculto');
 };
+document.getElementById('btn-mostrar-recuperar').onclick = () => {
+  document.getElementById('form-login').classList.add('oculto');
+  document.getElementById('form-recuperar').classList.remove('oculto');
+};
+document.getElementById('btn-recuperar-voltar').onclick = () => {
+  document.getElementById('form-recuperar').classList.add('oculto');
+  document.getElementById('form-login').classList.remove('oculto');
+};
+
+document.getElementById('form-recuperar').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('rec-email').value.trim();
+  const erroEl = document.getElementById('recuperar-erro');
+  erroEl.textContent = '';
+  try {
+    await recuperarSenha(email);
+    toast('Link enviado! Confira seu email (e a caixa de spam).');
+    document.getElementById('form-recuperar').classList.add('oculto');
+    document.getElementById('form-login').classList.remove('oculto');
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+});
+
+document.getElementById('form-nova-senha').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const novaSenha = document.getElementById('nova-senha').value;
+  const erroEl = document.getElementById('nova-senha-erro');
+  erroEl.textContent = '';
+  try {
+    await definirNovaSenha(novaSenha);
+    toast('Senha atualizada! Entrando...');
+    setTimeout(() => { location.href = 'app.html'; }, 1200);
+  } catch (err) {
+    erroEl.textContent = err.message;
+  }
+});
+
+// Se a pessoa chegou pelo link de "esqueci minha senha", troca a tela para
+// pedir a nova senha em vez do login normal.
+escutarRecuperacaoSenha(() => {
+  document.getElementById('form-login').classList.add('oculto');
+  document.getElementById('form-registro').classList.add('oculto');
+  document.getElementById('form-recuperar').classList.add('oculto');
+  document.getElementById('form-nova-senha').classList.remove('oculto');
+});
 
 document.getElementById('form-login').addEventListener('submit', async (e) => {
   e.preventDefault();
