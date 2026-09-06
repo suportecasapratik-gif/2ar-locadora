@@ -226,4 +226,8 @@ const perfisApi = {
     checarErro(error, 'Erro ao carregar a equipe.');
     return data;
   },
+  async atualizarPapel(id, papel) {
+    const { error } = await sb.from('perfis').update({ papel }).eq('id', id);
+    checarErro(error, 'Erro ao atualizar o papel do usuário.');
+  },
 };
