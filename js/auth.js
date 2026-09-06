@@ -10,7 +10,7 @@ async function obterSessao() {
 async function obterPerfil() {
   const sessao = await obterSessao();
   if (!sessao) return null;
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('perfis')
     .select('*')
     .eq('id', sessao.user.id)
