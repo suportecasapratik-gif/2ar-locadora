@@ -1,16 +1,14 @@
 // ==================================================================
 // Autenticação (usado por index.html e app.html)
 // ==================================================================
-
 async function obterSessao() {
-  const { data } = await supabase.auth.getSession();
+  const { data } = await sb.auth.getSession();
   return data.session;
 }
-
 async function obterPerfil() {
   const sessao = await obterSessao();
   if (!sessao) return null;
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('perfis')
     .select('*')
     .eq('id', sessao.user.id)
@@ -18,15 +16,13 @@ async function obterPerfil() {
   if (error) { console.error(error); return null; }
   return { ...data, email: sessao.user.email };
 }
-
 async function entrar(email, senha) {
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password: senha });
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: senha });
   if (error) throw new Error(traduzErroAuth(error.message));
   return data;
 }
-
 async function cadastrar(nome, email, senha) {
-  const { data, error } = await supabase.auth.signUp({
+  const { data, error } = await sb.auth.signUp({
     email,
     password: senha,
     options: { data: { nome } },
@@ -34,12 +30,10 @@ async function cadastrar(nome, email, senha) {
   if (error) throw new Error(traduzErroAuth(error.message));
   return data;
 }
-
 async function sair() {
-  await supabase.auth.signOut();
+  await sb.auth.signOut();
   location.href = 'index.html';
 }
-
 function traduzErroAuth(msg) {
   const mapa = {
     'Invalid login credentials': 'Email ou senha incorretos.',
@@ -48,7 +42,6 @@ function traduzErroAuth(msg) {
   };
   return mapa[msg] || msg;
 }
-
 // Protege app.html: redireciona para o login se não houver sessão válida.
 async function exigirSessao() {
   const sessao = await obterSessao();
