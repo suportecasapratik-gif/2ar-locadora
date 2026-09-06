@@ -1,6 +1,110 @@
 // ==================================================================
 // Views — renderização de cada módulo do app.html
 // ==================================================================
+// ---------- RELATÓRIOS ----------
+let RELATORIO_ATUAL = { tipo: 'fiado', linhas: [] };
+
+async function carregarRelatorios() {
+  const el = document.getElementById('view-relatorios');
+  el.innerHTML = `
+    <div class="view-header"><div><h1>Relatórios</h1><div class="sub">Fiado, locação e venda com filtro de período</div></div></div>
+    <div class="toolbar">
+      <select id="rel-tipo">
+        <option value="fiado">Fiado</option>
+        <option value="locacoes">Locação</option>
+        <option value="vendas">Venda</option>
+      </select>
+      <input type="date" id="rel-inicio" title="De" />
+      <input type="date" id="rel-fim" title="Até" />
+      <button class="btn-secundario" id="btn-gerar-relatorio">Gerar</button>
+      <button class="btn-primario" id="btn-exportar-relatorio">Exportar CSV</button>
+    </div>
+    <div id="rel-resumo" class="indicadores" style="margin-bottom:16px"></div>
+    <div class="tabela-wrap"><table><thead id="rel-thead"></thead><tbody id="rel-tbody"></tbody></table></div>
+  `;
+  document.getElementById('btn-gerar-relatorio').onclick = gerarRelatorio;
+  document.getElementById('btn-exportar-relatorio').onclick = exportarRelatorioCSV;
+  await gerarRelatorio();
+}
+
+async function gerarRelatorio() {
+  const tipo = document.getElementById('rel-tipo').value;
+  const inicio = document.getElementById('rel-inicio').value;
+  const fim = document.getElementById('rel-fim').value;
+  try {
+    let linhas = [];
+    if (tipo === 'fiado') linhas = await fiadoApi.listar();
+    else if (tipo === 'locacoes') linhas = await locacoesApi.listar();
+    else linhas = await vendasApi.listar();
+
+    const campoData = { fiado: 'data_venda', locacoes: 'data_inicio', vendas: 'data_venda' }[tipo];
+    if (inicio) linhas = linhas.filter(l => l[campoData] && String(l[campoData]).slice(0, 10) >= inicio);
+    if (fim) linhas = linhas.filter(l => l[campoData] && String(l[campoData]).slice(0, 10) <= fim);
+
+    RELATORIO_ATUAL = { tipo, linhas };
+    renderRelatorio(tipo, linhas);
+  } catch (err) { toast(err.message, true); }
+}
+
+function renderRelatorio(tipo, linhas) {
+  const thead = document.getElementById('rel-thead');
+  const tbody = document.getElementById('rel-tbody');
+  const resumo = document.getElementById('rel-resumo');
+
+  if (tipo === 'fiado') {
+    thead.innerHTML = `<tr><th>Cliente</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Status</th><th>Data</th></tr>`;
+    tbody.innerHTML = linhas.length
+      ? linhas.map(f => `<tr><td>${f.cliente_nome}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td><td>${dataBr(f.data_venda)}</td></tr>`).join('')
+      : `<tr><td colspan="6" class="vazio">Nenhum resultado para o período.</td></tr>`;
+    const total = linhas.reduce((s, f) => s + Number(f.valor_total), 0);
+    const saldo = linhas.reduce((s, f) => s + Number(f.saldo), 0);
+    resumo.innerHTML = `
+      <div class="indicador"><div class="rotulo">Total em fiado</div><div class="valor">${moeda(total)}</div></div>
+      <div class="indicador destaque"><div class="rotulo">Saldo em aberto</div><div class="valor">${moeda(saldo)}</div></div>
+      <div class="indicador"><div class="rotulo">Registros</div><div class="valor">${linhas.length}</div></div>`;
+  } else if (tipo === 'locacoes') {
+    thead.innerHTML = `<tr><th>Veículo</th><th>Cliente</th><th>Início</th><th>Status</th><th>Valor total</th></tr>`;
+    tbody.innerHTML = linhas.length
+      ? linhas.map(l => `<tr><td>${l.placa} — ${l.modelo}</td><td>${l.cliente_nome}</td><td>${dataBr(l.data_inicio)}</td><td><span class="tag tag-${l.status}">${rotuloStatusLocacao(l.status)}</span></td><td>${l.valor_total ? moeda(l.valor_total) : '—'}</td></tr>`).join('')
+      : `<tr><td colspan="5" class="vazio">Nenhum resultado para o período.</td></tr>`;
+    const total = linhas.reduce((s, l) => s + Number(l.valor_total || 0), 0);
+    resumo.innerHTML = `
+      <div class="indicador destaque"><div class="rotulo">Total faturado</div><div class="valor">${moeda(total)}</div></div>
+      <div class="indicador"><div class="rotulo">Registros</div><div class="valor">${linhas.length}</div></div>`;
+  } else {
+    thead.innerHTML = `<tr><th>Veículo</th><th>Cliente</th><th>Valor</th><th>Forma</th><th>Data</th></tr>`;
+    tbody.innerHTML = linhas.length
+      ? linhas.map(v => `<tr><td>${v.placa} — ${v.modelo}</td><td>${v.cliente_nome}</td><td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td></tr>`).join('')
+      : `<tr><td colspan="5" class="vazio">Nenhum resultado para o período.</td></tr>`;
+    const total = linhas.reduce((s, v) => s + Number(v.valor), 0);
+    resumo.innerHTML = `
+      <div class="indicador destaque"><div class="rotulo">Total vendido</div><div class="valor">${moeda(total)}</div></div>
+      <div class="indicador"><div class="rotulo">Registros</div><div class="valor">${linhas.length}</div></div>`;
+  }
+}
+
+function exportarRelatorioCSV() {
+  const { tipo, linhas } = RELATORIO_ATUAL;
+  if (!linhas.length) { toast('Nada para exportar.', true); return; }
+  let colunas, linhasCSV;
+  if (tipo === 'fiado') {
+    colunas = ['Cliente', 'Descrição', 'Total', 'Saldo', 'Status', 'Data'];
+    linhasCSV = linhas.map(f => [f.cliente_nome, f.descricao, f.valor_total, f.saldo, f.status, f.data_venda]);
+  } else if (tipo === 'locacoes') {
+    colunas = ['Placa', 'Modelo', 'Cliente', 'Início', 'Status', 'Valor total'];
+    linhasCSV = linhas.map(l => [l.placa, l.modelo, l.cliente_nome, l.data_inicio, l.status, l.valor_total || '']);
+  } else {
+    colunas = ['Placa', 'Modelo', 'Cliente', 'Valor', 'Forma', 'Data'];
+    linhasCSV = linhas.map(v => [v.placa, v.modelo, v.cliente_nome, v.valor, v.forma_pagamento, v.data_venda]);
+  }
+  const csv = [colunas.join(';'), ...linhasCSV.map(l => l.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(';'))].join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `relatorio-${tipo}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 let CACHE_CLIENTES = [];
 let CACHE_VEICULOS = [];
