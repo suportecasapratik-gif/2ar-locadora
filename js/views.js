@@ -20,6 +20,11 @@ function rotuloStatusFiado(s) {
 function rotuloStatusLocacao(s) {
   return { ativa: 'Ativa', finalizada: 'Finalizada', atrasada: 'Atrasada', cancelada: 'Cancelada' }[s] || s;
 }
+function statusExibicaoLocacao(l) {
+  const hoje = new Date().toISOString().slice(0, 10);
+  if (l.status === 'ativa' && l.data_fim_prevista && l.data_fim_prevista < hoje) return 'atrasada';
+  return l.status;
+}
 
 // ---------- PAINEL ----------
 let GRAFICO_RECEITA = null;
@@ -132,9 +137,50 @@ async function renderClientes(busca, status) {
         <td>${c.nome}</td><td>${c.telefone || '—'}</td><td>${c.cpf || '—'}</td>
         <td>${c.cnh || '—'}${c.cnh && cnhVencida(c.cnh_vencimento) ? ' <span class="tag tag-atrasado">Vencida</span>' : ''}</td>
         <td><span class="tag tag-${c.status === 'inativo' ? 'cancelada' : 'quitado'}">${rotuloStatusCliente(c.status)}</span></td>
-        <td><button class="btn-secundario" onclick="formCliente(${c.id})">Editar</button></td>
+        <td>
+          <button class="btn-secundario" onclick="verHistoricoCliente(${c.id}, '${c.nome.replace(/'/g, "\\'")}')">Histórico</button>
+          <button class="btn-secundario" onclick="formCliente(${c.id})">Editar</button>
+          ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirCliente(${c.id})">Excluir</button>` : ''}
+        </td>
       </tr>`).join('');
   } catch (err) { toast(err.message, true); }
+}
+
+async function excluirCliente(id) {
+  if (!confirm('Excluir este cliente? Só é possível se ele não tiver fiado, locação ou venda registrados.')) return;
+  try {
+    await clientesApi.excluir(id);
+    toast('Cliente excluído.');
+    renderClientes();
+  } catch (err) { toast(err.message, true); }
+}
+
+async function verHistoricoCliente(id, nome) {
+  abrirModal(`<h2>Histórico — ${nome}</h2><p class="sub" id="hist-carregando">Carregando...</p>`);
+  try {
+    const [fiados, locacoes, vendas] = await Promise.all([fiadoApi.listar(), locacoesApi.listar(), vendasApi.listar()]);
+    const fiadosCliente = fiados.filter(f => f.cliente_id === id);
+    const locacoesCliente = locacoes.filter(l => l.cliente_id === id);
+    const vendasCliente = vendas.filter(v => v.cliente_id === id);
+
+    const blocoFiado = fiadosCliente.length
+      ? fiadosCliente.map(f => `<div class="hist-item"><span>${f.descricao} — ${moeda(f.valor_total)}</span><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></div>`).join('')
+      : '<p class="sub">Nenhum fiado.</p>';
+    const blocoLocacao = locacoesCliente.length
+      ? locacoesCliente.map(l => `<div class="hist-item"><span>${l.placa} — ${l.modelo} (${dataBr(l.data_inicio)})</span><span class="tag tag-${l.status}">${rotuloStatusLocacao(l.status)}</span></div>`).join('')
+      : '<p class="sub">Nenhuma locação.</p>';
+    const blocoVenda = vendasCliente.length
+      ? vendasCliente.map(v => `<div class="hist-item"><span>${v.placa} — ${v.modelo}</span><span>${moeda(v.valor)}</span></div>`).join('')
+      : '<p class="sub">Nenhuma venda.</p>';
+
+    abrirModal(`
+      <h2>Histórico — ${nome}</h2>
+      <p class="grafico-titulo" style="font-size:14px;margin-bottom:8px">Fiado</p>${blocoFiado}
+      <p class="grafico-titulo" style="font-size:14px;margin:16px 0 8px">Locação</p>${blocoLocacao}
+      <p class="grafico-titulo" style="font-size:14px;margin:16px 0 8px">Venda</p>${blocoVenda}
+      <div class="modal-acoes"><button type="button" class="btn-secundario" onclick="fecharModal()">Fechar</button></div>
+    `);
+  } catch (err) { fecharModal(); toast(err.message, true); }
 }
 async function formCliente(id) {
   let c = {
@@ -271,7 +317,7 @@ function renderRelatorio(tipo, linhas) {
   } else if (tipo === 'locacoes') {
     thead.innerHTML = `<tr><th>Veículo</th><th>Cliente</th><th>Início</th><th>Status</th><th>Valor total</th></tr>`;
     tbody.innerHTML = linhas.length
-      ? linhas.map(l => `<tr><td>${l.placa} — ${l.modelo}</td><td>${l.cliente_nome}</td><td>${dataBr(l.data_inicio)}</td><td><span class="tag tag-${l.status}">${rotuloStatusLocacao(l.status)}</span></td><td>${l.valor_total ? moeda(l.valor_total) : '—'}</td></tr>`).join('')
+      ? linhas.map(l => `<tr><td>${l.placa} — ${l.modelo}</td><td>${l.cliente_nome}</td><td>${dataBr(l.data_inicio)}</td><td><span class="tag tag-${statusExibicaoLocacao(l)}">${rotuloStatusLocacao(statusExibicaoLocacao(l))}</span></td><td>${l.valor_total ? moeda(l.valor_total) : '—'}</td></tr>`).join('')
       : `<tr><td colspan="5" class="vazio">Nenhum resultado para o período.</td></tr>`;
     const total = linhas.reduce((s, l) => s + Number(l.valor_total || 0), 0);
     resumo.innerHTML = `
@@ -347,8 +393,20 @@ async function renderVeiculos(status) {
         <td><span class="tag tag-${v.status}">${rotuloStatusVeiculo(v.status)}</span></td>
         <td>${v.valor_venda ? moeda(v.valor_venda) : '—'}</td>
         <td>${v.valor_diaria ? moeda(v.valor_diaria) : '—'}</td>
-        <td><button class="btn-secundario" onclick="formVeiculo(${v.id})">Editar</button></td>
+        <td>
+          <button class="btn-secundario" onclick="formVeiculo(${v.id})">Editar</button>
+          ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirVeiculo(${v.id})">Excluir</button>` : ''}
+        </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+
+async function excluirVeiculo(id) {
+  if (!confirm('Excluir este veículo? Só é possível se ele não tiver locação ou venda registrados.')) return;
+  try {
+    await veiculosApi.excluir(id);
+    toast('Veículo excluído.');
+    renderVeiculos();
   } catch (err) { toast(err.message, true); }
 }
 async function formVeiculo(id) {
@@ -507,25 +565,44 @@ async function carregarLocacoes() {
       <div><h1>Locação</h1><div class="sub">Aluguel de veículos</div></div>
       <button class="btn-primario" id="btn-nova-locacao">+ Nova locação</button>
     </div>
+    <div class="toolbar"><input type="text" id="busca-locacao" placeholder="Buscar por cliente ou placa..." /></div>
     <div class="tabela-wrap"><table><thead><tr><th>Veículo</th><th>Cliente</th><th>Início</th><th>Fim previsto</th><th>Diária</th><th>Status</th><th></th></tr></thead><tbody id="tbody-locacoes"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
   document.getElementById('btn-nova-locacao').onclick = () => formLocacao();
+  document.getElementById('busca-locacao').addEventListener('input', (e) => renderLocacoes(e.target.value));
   await renderLocacoes();
 }
-async function renderLocacoes() {
+async function renderLocacoes(busca) {
   try {
-    const lista = await locacoesApi.listar();
+    let lista = await locacoesApi.listar();
+    if (busca) {
+      const termo = busca.toLowerCase();
+      lista = lista.filter(l => l.cliente_nome?.toLowerCase().includes(termo) || l.placa?.toLowerCase().includes(termo));
+    }
     const tbody = document.getElementById('tbody-locacoes');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhuma locação registrada ainda.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhuma locação encontrada.</td></tr>`; return; }
     tbody.innerHTML = lista.map(l => `
       <tr>
         <td>${l.placa} — ${l.modelo}</td><td>${l.cliente_nome}</td><td>${dataBr(l.data_inicio)}</td>
         <td>${dataBr(l.data_fim_prevista)}</td><td>${moeda(l.valor_diaria)}</td>
-        <td><span class="tag tag-${l.status}">${rotuloStatusLocacao(l.status)}</span></td>
-        <td>${l.status === 'ativa' ? `<button class="btn-secundario" onclick="finalizarLocacao(${l.id}, ${l.veiculo_id})">Finalizar</button>` : ''}</td>
+        <td><span class="tag tag-${statusExibicaoLocacao(l)}">${rotuloStatusLocacao(statusExibicaoLocacao(l))}</span></td>
+        <td>${l.status === 'ativa'
+          ? `<button class="btn-secundario" onclick="finalizarLocacao(${l.id}, ${l.veiculo_id})">Finalizar</button>
+             <button class="btn-secundario" onclick="cancelarLocacao(${l.id}, ${l.veiculo_id})">Cancelar</button>`
+          : ''}
+          ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirLocacao(${l.id})">Excluir</button>` : ''}
+        </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function excluirLocacao(id) {
+  if (!confirm('Excluir esta locação? Essa ação não pode ser desfeita.')) return;
+  try {
+    await locacoesApi.excluir(id);
+    toast('Locação excluída.');
+    renderLocacoes();
   } catch (err) { toast(err.message, true); }
 }
 async function formLocacao() {
@@ -593,6 +670,15 @@ async function finalizarLocacao(id, veiculoId) {
   });
 }
 
+async function cancelarLocacao(id, veiculoId) {
+  if (!confirm('Cancelar esta locação? O veículo volta a ficar disponível.')) return;
+  try {
+    await locacoesApi.cancelar(id, veiculoId);
+    toast('Locação cancelada.');
+    renderLocacoes();
+  } catch (err) { toast(err.message, true); }
+}
+
 // ---------- VENDAS ----------
 async function carregarVendas() {
   const el = document.getElementById('view-vendas');
@@ -601,20 +687,37 @@ async function carregarVendas() {
       <div><h1>Venda</h1><div class="sub">Venda de veículos</div></div>
       <button class="btn-primario" id="btn-nova-venda">+ Nova venda</button>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Veículo</th><th>Cliente</th><th>Valor</th><th>Forma</th><th>Data</th></tr></thead><tbody id="tbody-vendas"></tbody></table></div>
+    <div class="toolbar"><input type="text" id="busca-venda" placeholder="Buscar por cliente ou placa..." /></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Veículo</th><th>Cliente</th><th>Valor</th><th>Forma</th><th>Data</th><th></th></tr></thead><tbody id="tbody-vendas"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
   document.getElementById('btn-nova-venda').onclick = () => formVenda();
+  document.getElementById('busca-venda').addEventListener('input', (e) => renderVendas(e.target.value));
   await renderVendas();
 }
-async function renderVendas() {
+async function renderVendas(busca) {
   try {
-    const lista = await vendasApi.listar();
+    let lista = await vendasApi.listar();
+    if (busca) {
+      const termo = busca.toLowerCase();
+      lista = lista.filter(v => v.cliente_nome?.toLowerCase().includes(termo) || v.placa?.toLowerCase().includes(termo));
+    }
     const tbody = document.getElementById('tbody-vendas');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="5" class="vazio">Nenhuma venda registrada ainda.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="6" class="vazio">Nenhuma venda encontrada.</td></tr>`; return; }
     tbody.innerHTML = lista.map(v => `
-      <tr><td>${v.placa} — ${v.modelo}</td><td>${v.cliente_nome}</td><td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td></tr>`).join('');
+      <tr>
+        <td>${v.placa} — ${v.modelo}</td><td>${v.cliente_nome}</td><td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td>
+        <td>${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirVenda(${v.id})">Excluir</button>` : ''}</td>
+      </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function excluirVenda(id) {
+  if (!confirm('Excluir esta venda? O veículo NÃO volta automaticamente a "disponível" — ajuste o status dele em Veículos se for o caso.')) return;
+  try {
+    await vendasApi.excluir(id);
+    toast('Venda excluída.');
+    renderVendas();
   } catch (err) { toast(err.message, true); }
 }
 async function formVenda() {
