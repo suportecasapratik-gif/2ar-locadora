@@ -41,6 +41,7 @@ async function carregarDashboard() {
     <div class="view-header"><div><h1>Painel</h1><div class="sub">Visão geral do pátio</div></div></div>
     <div class="indicadores" id="ind-grid"></div>
     <div class="painel-grafico" id="painel-vencendo" style="margin-bottom:24px"></div>
+    <div class="painel-grafico" id="painel-cnh" style="margin-bottom:24px"></div>
     <div class="painel-grafico">
       <h2 class="grafico-titulo">Receita mensal — fiado, locação e venda</h2>
       <canvas id="grafico-receita" height="90"></canvas>
@@ -67,6 +68,17 @@ async function carregarDashboard() {
       vencendo.length
         ? vencendo.map(f => `<div class="hist-item"><span>${f.cliente_nome} — ${f.descricao} (${dataBr(f.vencimento)})</span><span class="tag tag-parcial">${moeda(f.saldo)}</span></div>`).join('')
         : `<p class="sub">Nenhum fiado vencendo nos próximos 7 dias.</p>`
+    );
+  } catch (err) { toast(err.message, true); }
+
+  try {
+    const cnhs = await dashboardApi.cnhVencendo();
+    const painelCnh = document.getElementById('painel-cnh');
+    const hoje = new Date().toISOString().slice(0, 10);
+    painelCnh.innerHTML = `<h2 class="grafico-titulo">CNH vencida ou vencendo em 30 dias</h2>` + (
+      cnhs.length
+        ? cnhs.map(c => `<div class="hist-item"><span>${c.nome} — CNH ${c.cnh}</span><span class="tag ${c.cnh_vencimento < hoje ? 'tag-atrasado' : 'tag-parcial'}">${c.cnh_vencimento < hoje ? 'Vencida' : 'Vence'} ${dataBr(c.cnh_vencimento)}</span></div>`).join('')
+        : `<p class="sub">Nenhuma CNH vencida ou vencendo em 30 dias.</p>`
     );
   } catch (err) { toast(err.message, true); }
 
@@ -292,12 +304,14 @@ async function carregarRelatorios() {
       <input type="date" id="rel-inicio" title="De" />
       <input type="date" id="rel-fim" title="Até" />
       <button class="btn-secundario" id="btn-gerar-relatorio">Gerar</button>
+      <button class="btn-secundario" id="btn-imprimir-relatorio">Imprimir</button>
       <button class="btn-primario" id="btn-exportar-relatorio">Exportar CSV</button>
     </div>
     <div id="rel-resumo" class="indicadores" style="margin-bottom:16px"></div>
     <div class="tabela-wrap"><table><thead id="rel-thead"></thead><tbody id="rel-tbody"></tbody></table></div>
   `;
   document.getElementById('btn-gerar-relatorio').onclick = gerarRelatorio;
+  document.getElementById('btn-imprimir-relatorio').onclick = () => window.print();
   document.getElementById('btn-exportar-relatorio').onclick = exportarRelatorioCSV;
   await gerarRelatorio();
 }

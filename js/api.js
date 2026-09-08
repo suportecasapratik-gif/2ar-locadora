@@ -104,6 +104,22 @@ const dashboardApi = {
       return { ...f, cliente_nome: f.clientes?.nome, saldo: f.valor_total - pago };
     });
   },
+
+  // Clientes ativos com CNH cadastrada e vencida (ou vencendo em 30 dias) —
+  // relevante pra locação, que exige CNH válida.
+  async cnhVencendo() {
+    const em30dias = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const { data, error } = await sb
+      .from('clientes')
+      .select('id,nome,cnh,cnh_vencimento')
+      .eq('status', 'ativo')
+      .not('cnh', 'is', null)
+      .not('cnh_vencimento', 'is', null)
+      .lte('cnh_vencimento', em30dias)
+      .order('cnh_vencimento', { ascending: true });
+    checarErro(error, 'Erro ao carregar CNHs a vencer.');
+    return data || [];
+  },
 };
 
 // ---------- CLIENTES ----------
