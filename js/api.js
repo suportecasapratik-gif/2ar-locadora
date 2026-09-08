@@ -149,6 +149,15 @@ const clientesApi = {
       vendas: (vendas || []).map(v => ({ ...v, placa: v.veiculos?.placa, modelo: v.veiculos?.modelo })),
     };
   },
+  async enviarFoto(cpfOuId, arquivo) {
+    const extensao = arquivo.name.split('.').pop();
+    const base = String(cpfOuId).replace(/\D/g, '') || 'cliente';
+    const caminho = `${base}-${Date.now()}.${extensao}`;
+    const { error } = await sb.storage.from('clientes-fotos').upload(caminho, arquivo, { upsert: true });
+    checarErro(error, 'Erro ao enviar a foto.');
+    const { data } = sb.storage.from('clientes-fotos').getPublicUrl(caminho);
+    return data.publicUrl;
+  },
 };
 
 // ---------- VEÍCULOS ----------

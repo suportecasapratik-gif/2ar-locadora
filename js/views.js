@@ -132,7 +132,7 @@ async function carregarClientes() {
       </select>
       <button class="btn-secundario" id="btn-exportar-clientes">Exportar CSV</button>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Nome</th><th>Telefone</th><th>CPF</th><th>CNH</th><th>Status</th><th></th></tr></thead><tbody id="tbody-clientes"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Nome</th><th>Telefone</th><th>CPF</th><th>CNH</th><th>Status</th><th></th></tr></thead><tbody id="tbody-clientes"></tbody></table></div>
   `;
   document.getElementById('btn-exportar-clientes').onclick = () => exportarCSV('clientes',
     [{ titulo: 'Nome', campo: 'nome' }, { titulo: 'Telefone', campo: 'telefone' }, { titulo: 'CPF', campo: 'cpf' },
@@ -149,9 +149,10 @@ async function renderClientes(busca, status) {
     if (status) lista = lista.filter(c => (c.status || 'ativo') === status);
     CACHE_CLIENTES = lista;
     const tbody = document.getElementById('tbody-clientes');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="6" class="vazio">Nenhum cliente cadastrado ainda.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum cliente cadastrado ainda.</td></tr>`; return; }
     tbody.innerHTML = lista.map(c => `
       <tr>
+        <td>${c.foto_url ? `<img src="${c.foto_url}" alt="${c.nome}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
         <td>${c.nome}</td><td>${c.telefone || '—'}</td><td>${c.cpf || '—'}</td>
         <td>${c.cnh || '—'}${c.cnh && cnhVencida(c.cnh_vencimento) ? ' <span class="tag tag-atrasado">Vencida</span>' : ''}</td>
         <td><span class="tag tag-${c.status === 'inativo' ? 'cancelada' : 'quitado'}">${rotuloStatusCliente(c.status)}</span></td>
@@ -204,12 +205,14 @@ async function formCliente(id) {
   let c = {
     nome: '', cpf: '', telefone: '', endereco: '', observacoes: '',
     rg: '', cnh: '', cnh_vencimento: '', data_nascimento: '', profissao: '',
-    referencia_nome: '', referencia_telefone: '', status: 'ativo',
+    referencia_nome: '', referencia_telefone: '', status: 'ativo', foto_url: '',
   };
   if (id) c = { ...c, ...(await clientesApi.obter(id)) };
   abrirModal(`
     <h2>${id ? 'Editar cliente' : 'Novo cliente'}</h2>
     <form id="form-cliente">
+      ${c.foto_url ? `<img src="${c.foto_url}" alt="Foto atual" class="thumb-preview" />` : ''}
+      <label>Foto (documento ou rosto)<input type="file" id="c-foto" accept="image/*" /></label>
       <label>Nome<input required id="c-nome" value="${c.nome}" /></label>
       <div class="form-linha">
         <label>Telefone<input id="c-telefone" value="${c.telefone || ''}" /></label>
@@ -264,6 +267,8 @@ async function formCliente(id) {
       observacoes: document.getElementById('c-obs').value.trim(),
     };
     try {
+      const arquivo = document.getElementById('c-foto').files[0];
+      if (arquivo) dados.foto_url = await clientesApi.enviarFoto(cpf || dados.nome, arquivo);
       if (id) await clientesApi.atualizar(id, dados);
       else await clientesApi.criar(dados);
       fecharModal(); toast('Cliente salvo.'); renderClientes();
@@ -385,6 +390,7 @@ async function carregarVeiculos() {
       <button class="btn-primario" id="btn-novo-veiculo">+ Novo veículo</button>
     </div>
     <div class="toolbar">
+      <input type="text" id="busca-veiculo" placeholder="Buscar por placa, marca ou modelo..." />
       <select id="filtro-status-veiculo">
         <option value="">Todos os status</option>
         <option value="disponivel">Disponível</option>
@@ -401,15 +407,21 @@ async function carregarVeiculos() {
      { titulo: 'Ano', campo: 'ano' }, { titulo: 'Status', campo: 'status' }, { titulo: 'Valor venda', campo: 'valor_venda' },
      { titulo: 'Valor diária', campo: 'valor_diaria' }, { titulo: 'KM', campo: 'km' }], CACHE_VEICULOS);
   document.getElementById('btn-novo-veiculo').onclick = () => formVeiculo();
-  document.getElementById('filtro-status-veiculo').addEventListener('change', (e) => renderVeiculos(e.target.value));
+  const disparar = () => renderVeiculos(document.getElementById('filtro-status-veiculo').value, document.getElementById('busca-veiculo').value);
+  document.getElementById('filtro-status-veiculo').addEventListener('change', disparar);
+  document.getElementById('busca-veiculo').addEventListener('input', disparar);
   await renderVeiculos();
 }
-async function renderVeiculos(status) {
+async function renderVeiculos(status, busca) {
   try {
-    const lista = await veiculosApi.listar(status);
+    let lista = await veiculosApi.listar(status);
+    if (busca) {
+      const termo = busca.toLowerCase();
+      lista = lista.filter(v => v.placa?.toLowerCase().includes(termo) || v.marca?.toLowerCase().includes(termo) || v.modelo?.toLowerCase().includes(termo));
+    }
     CACHE_VEICULOS = lista;
     const tbody = document.getElementById('tbody-veiculos');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum veículo cadastrado ainda.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="8" class="vazio">Nenhum veículo encontrado.</td></tr>`; return; }
     tbody.innerHTML = lista.map(v => `
       <tr>
         <td>${v.foto_url ? `<img src="${v.foto_url}" alt="${v.placa}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
