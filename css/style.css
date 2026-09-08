@@ -147,6 +147,23 @@ nav { display: flex; flex-direction: column; gap: 2px; flex: 1; }
   letter-spacing: 0.2px;
 }
 
+/* ---------- FOTOS DE VEÍCULO ---------- */
+.thumb-veiculo {
+  width: 56px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+.thumb-preview {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+
 /* ---------- TABELAS ---------- */
 table { width: 100%; border-collapse: collapse; }
 thead th { text-align: left; font-size: 12px; color: var(--text-muted); font-weight: 600; padding: 10px 14px; border-bottom: 1px solid var(--border); }
@@ -176,6 +193,16 @@ tbody tr:hover { background: var(--surface); }
 .modal-conteudo form { display: flex; flex-direction: column; gap: 14px; }
 .form-linha { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .modal-acoes { display: flex; justify-content: flex-end; gap: 10px; margin-top: 8px; }
+.hist-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13.5px;
+}
+.hist-item:last-of-type { border-bottom: none; }
 
 /* ---------- TOAST ---------- */
 .toast { position: fixed; bottom: 24px; right: 24px; background: var(--surface-2); border: 1px solid var(--border); border-left: 3px solid var(--success); padding: 14px 20px; font-size: 13.5px; z-index: 100; max-width: 320px; }
