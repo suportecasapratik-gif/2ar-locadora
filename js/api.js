@@ -82,6 +82,24 @@ const dashboardApi = {
       venda: chaves.map(k => vendaPorMes[k]),
     };
   },
+
+  // Fiados com vencimento nos próximos 7 dias, ainda não quitados.
+  async vencendoEmBreve() {
+    const hoje = new Date().toISOString().slice(0, 10);
+    const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+    const { data, error } = await sb
+      .from('fiados')
+      .select('*, clientes(nome), fiado_pagamentos(valor)')
+      .gte('vencimento', hoje)
+      .lte('vencimento', em7dias)
+      .neq('status', 'quitado')
+      .order('vencimento', { ascending: true });
+    checarErro(error, 'Erro ao carregar fiados a vencer.');
+    return (data || []).map(f => {
+      const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
+      return { ...f, cliente_nome: f.clientes?.nome, saldo: f.valor_total - pago };
+    });
+  },
 };
 
 // ---------- CLIENTES ----------
@@ -107,6 +125,26 @@ const clientesApi = {
     const { error } = await sb.from('clientes').update(dados).eq('id', id);
     checarErro(error, 'Erro ao atualizar cliente.');
   },
+  async excluir(id) {
+    const { error } = await sb.from('clientes').delete().eq('id', id);
+    checarErro(error, 'Erro ao excluir cliente. Verifique se ele não tem fiados, locações ou vendas vinculados.');
+  },
+  async historico(id) {
+    const [{ data: fiados, error: e1 }, { data: locacoes, error: e2 }, { data: vendas, error: e3 }] = await Promise.all([
+      sb.from('fiados').select('*, fiado_pagamentos(valor)').eq('cliente_id', id).order('data_venda', { ascending: false }),
+      sb.from('locacoes').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_inicio', { ascending: false }),
+      sb.from('vendas').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_venda', { ascending: false }),
+    ]);
+    checarErro(e1 || e2 || e3, 'Erro ao carregar histórico do cliente.');
+    return {
+      fiados: (fiados || []).map(f => {
+        const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
+        return { ...f, saldo: f.valor_total - pago };
+      }),
+      locacoes: (locacoes || []).map(l => ({ ...l, placa: l.veiculos?.placa, modelo: l.veiculos?.modelo })),
+      vendas: (vendas || []).map(v => ({ ...v, placa: v.veiculos?.placa, modelo: v.veiculos?.modelo })),
+    };
+  },
 };
 
 // ---------- VEÍCULOS ----------
@@ -127,6 +165,10 @@ const veiculosApi = {
   async atualizar(id, dados) {
     const { error } = await sb.from('veiculos').update(dados).eq('id', id);
     checarErro(error, 'Erro ao atualizar veículo.');
+  },
+  async excluir(id) {
+    const { error } = await sb.from('veiculos').delete().eq('id', id);
+    checarErro(error, 'Erro ao excluir veículo. Verifique se ele não tem locações ou vendas vinculadas.');
   },
 };
 
@@ -157,6 +199,12 @@ const fiadoApi = {
     checarErro(e1, 'Erro ao registrar pagamento.');
     const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
     checarErro(e2, 'Pagamento salvo, mas o status não pôde ser recalculado.');
+  },
+  async excluir(id) {
+    const { error: e1 } = await sb.from('fiado_pagamentos').delete().eq('fiado_id', id);
+    checarErro(e1, 'Erro ao excluir os pagamentos deste fiado.');
+    const { error: e2 } = await sb.from('fiados').delete().eq('id', id);
+    checarErro(e2, 'Erro ao excluir fiado.');
   },
 };
 
@@ -192,6 +240,16 @@ const locacoesApi = {
     const { error: e2 } = await sb.from('veiculos').update({ status: 'disponivel' }).eq('id', veiculoId);
     checarErro(e2, 'Locação finalizada, mas o veículo não pôde ser liberado.');
   },
+  async cancelar(id, veiculoId) {
+    const { error: e1 } = await sb.from('locacoes').update({ status: 'cancelada' }).eq('id', id);
+    checarErro(e1, 'Erro ao cancelar locação.');
+    const { error: e2 } = await sb.from('veiculos').update({ status: 'disponivel' }).eq('id', veiculoId);
+    checarErro(e2, 'Locação cancelada, mas o veículo não pôde ser liberado.');
+  },
+  async excluir(id) {
+    const { error } = await sb.from('locacoes').delete().eq('id', id);
+    checarErro(error, 'Erro ao excluir locação.');
+  },
 };
 
 // ---------- VENDAS ----------
@@ -216,6 +274,10 @@ const vendasApi = {
     const { error: eU } = await sb.from('veiculos').update({ status: 'vendido' }).eq('id', dados.veiculo_id);
     checarErro(eU, 'Venda criada, mas o status do veículo não pôde ser atualizado.');
     return data;
+  },
+  async excluir(id) {
+    const { error } = await sb.from('vendas').delete().eq('id', id);
+    checarErro(error, 'Erro ao excluir venda.');
   },
 };
 
