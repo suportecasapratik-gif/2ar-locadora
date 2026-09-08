@@ -53,8 +53,10 @@ async function carregarDashboard() {
       <div class="indicador ${d.fiados_atrasados > 0 ? 'alerta' : ''}"><div class="rotulo">Fiados atrasados</div><div class="valor">${d.fiados_atrasados}</div></div>
       <div class="indicador"><div class="rotulo">Locações ativas</div><div class="valor">${d.locacoes_ativas}</div></div>
       <div class="indicador"><div class="rotulo">Veículos disponíveis</div><div class="valor">${d.veiculos_disponiveis}</div></div>
+      <div class="indicador ${d.veiculos_manutencao > 0 ? 'alerta' : ''}"><div class="rotulo">Veículos em manutenção</div><div class="valor">${d.veiculos_manutencao}</div></div>
       <div class="indicador"><div class="rotulo">Vendas do mês</div><div class="valor">${moeda(d.vendas_mes)}</div></div>
       <div class="indicador"><div class="rotulo">Clientes cadastrados</div><div class="valor">${d.clientes_total}</div></div>
+      <div class="indicador"><div class="rotulo">Clientes inativos</div><div class="valor">${d.clientes_inativos}</div></div>
     `;
   } catch (err) { toast(err.message, true); }
 
@@ -518,9 +520,43 @@ async function renderFiado(status, busca) {
         <td>${dataBr(f.vencimento)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td>
         <td>
           ${f.saldo > 0 ? `<button class="btn-secundario" onclick="formPagamento(${f.id}, ${f.saldo})">Receber</button>` : ''}
+          ${f.valor_pago === 0 ? `<button class="btn-secundario" onclick="editarFiado(${f.id})">Editar</button>` : ''}
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirFiado(${f.id})">Excluir</button>` : ''}
         </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function editarFiado(id) {
+  try {
+    const lista = await fiadoApi.listar();
+    const f = lista.find(x => x.id === id);
+    if (!f) return;
+    if (f.valor_pago > 0) { toast('Não é possível editar um fiado que já recebeu pagamento.', true); return; }
+    abrirModal(`
+      <h2>Editar fiado</h2>
+      <p class="sub" style="margin-bottom:12px">${f.cliente_nome}</p>
+      <form id="form-editar-fiado">
+        <label>Descrição<input required id="ef-desc" value="${f.descricao}" /></label>
+        <div class="form-linha">
+          <label>Valor total (R$)<input required id="ef-valor" type="number" step="0.01" value="${f.valor_total}" /></label>
+          <label>Vencimento<input id="ef-venc" type="date" value="${f.vencimento || ''}" /></label>
+        </div>
+        <div class="modal-acoes">
+          <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
+          <button type="submit" class="btn-primario">Salvar</button>
+        </div>
+      </form>`);
+    document.getElementById('form-editar-fiado').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await fiadoApi.atualizar(id, {
+          descricao: document.getElementById('ef-desc').value.trim(),
+          valor_total: Number(document.getElementById('ef-valor').value),
+          vencimento: document.getElementById('ef-venc').value || null,
+        });
+        fecharModal(); toast('Fiado atualizado.'); renderFiado();
+      } catch (err) { toast(err.message, true); }
+    });
   } catch (err) { toast(err.message, true); }
 }
 async function excluirFiado(id) {
@@ -737,8 +773,45 @@ async function renderVendas(busca) {
     tbody.innerHTML = lista.map(v => `
       <tr>
         <td>${v.placa} — ${v.modelo}</td><td>${v.cliente_nome}</td><td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td>
-        <td>${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirVenda(${v.id})">Excluir</button>` : ''}</td>
+        <td>
+          ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="editarVenda(${v.id})">Editar</button>` : ''}
+          ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirVenda(${v.id})">Excluir</button>` : ''}
+        </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function editarVenda(id) {
+  try {
+    const lista = await vendasApi.listar();
+    const v = lista.find(x => x.id === id);
+    if (!v) return;
+    abrirModal(`
+      <h2>Editar venda</h2>
+      <p class="sub" style="margin-bottom:12px">${v.placa} — ${v.modelo} · ${v.cliente_nome}</p>
+      <form id="form-editar-venda">
+        <div class="form-linha">
+          <label>Valor (R$)<input required id="ev-valor" type="number" step="0.01" value="${v.valor}" /></label>
+          <label>Forma de pagamento
+            <select id="ev-forma">
+              ${['À vista', 'Financiado', 'Pix', 'Cartão'].map(f => `<option ${f === v.forma_pagamento ? 'selected' : ''}>${f}</option>`).join('')}
+            </select>
+          </label>
+        </div>
+        <div class="modal-acoes">
+          <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
+          <button type="submit" class="btn-primario">Salvar</button>
+        </div>
+      </form>`);
+    document.getElementById('form-editar-venda').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await vendasApi.atualizar(id, {
+          valor: Number(document.getElementById('ev-valor').value),
+          forma_pagamento: document.getElementById('ev-forma').value,
+        });
+        fecharModal(); toast('Venda atualizada.'); renderVendas();
+      } catch (err) { toast(err.message, true); }
+    });
   } catch (err) { toast(err.message, true); }
 }
 async function excluirVenda(id) {

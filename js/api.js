@@ -16,7 +16,7 @@ const dashboardApi = {
       sb.from('fiado_pagamentos').select('valor'),
       sb.from('veiculos').select('status'),
       sb.from('locacoes').select('id').eq('status', 'ativa'),
-      sb.from('clientes').select('id'),
+      sb.from('clientes').select('id,status'),
       sb.from('vendas').select('valor,data_venda'),
     ]);
 
@@ -26,6 +26,8 @@ const dashboardApi = {
 
     const porStatusVeiculo = {};
     (veiculos || []).forEach(v => { porStatusVeiculo[v.status] = (porStatusVeiculo[v.status] || 0) + 1; });
+
+    const clientesInativos = (clientes || []).filter(c => c.status === 'inativo').length;
 
     const hoje = new Date();
     const vendasMes = (vendas || [])
@@ -40,8 +42,10 @@ const dashboardApi = {
       fiados_atrasados: fiadosAtrasados,
       locacoes_ativas: (locacoesAtivas || []).length,
       clientes_total: (clientes || []).length,
+      clientes_inativos: clientesInativos,
       vendas_mes: vendasMes,
       veiculos_disponiveis: porStatusVeiculo.disponivel || 0,
+      veiculos_manutencao: porStatusVeiculo.manutencao || 0,
     };
   },
 
@@ -192,6 +196,10 @@ const fiadoApi = {
     checarErro(error, 'Erro ao registrar fiado.');
     return data;
   },
+  async atualizar(id, dados) {
+    const { error } = await sb.from('fiados').update(dados).eq('id', id);
+    checarErro(error, 'Erro ao atualizar fiado.');
+  },
   async registrarPagamento(fiadoId, valor, formaPagamento) {
     const { error: e1 } = await sb
       .from('fiado_pagamentos')
@@ -278,6 +286,10 @@ const vendasApi = {
   async excluir(id) {
     const { error } = await sb.from('vendas').delete().eq('id', id);
     checarErro(error, 'Erro ao excluir venda.');
+  },
+  async atualizar(id, dados) {
+    const { error } = await sb.from('vendas').update(dados).eq('id', id);
+    checarErro(error, 'Erro ao atualizar venda.');
   },
 };
 
