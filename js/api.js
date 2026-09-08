@@ -174,6 +174,15 @@ const veiculosApi = {
     const { error } = await sb.from('veiculos').delete().eq('id', id);
     checarErro(error, 'Erro ao excluir veículo. Verifique se ele não tem locações ou vendas vinculadas.');
   },
+  // Envia a foto para o Storage e retorna a URL pública para salvar em foto_url.
+  async enviarFoto(placa, arquivo) {
+    const extensao = arquivo.name.split('.').pop();
+    const caminho = `${placa}-${Date.now()}.${extensao}`;
+    const { error } = await sb.storage.from('veiculos-fotos').upload(caminho, arquivo, { upsert: true });
+    checarErro(error, 'Erro ao enviar a foto.');
+    const { data } = sb.storage.from('veiculos-fotos').getPublicUrl(caminho);
+    return data.publicUrl;
+  },
 };
 
 // ---------- FIADO ----------
@@ -257,6 +266,10 @@ const locacoesApi = {
   async excluir(id) {
     const { error } = await sb.from('locacoes').delete().eq('id', id);
     checarErro(error, 'Erro ao excluir locação.');
+  },
+  async atualizar(id, dados) {
+    const { error } = await sb.from('locacoes').update(dados).eq('id', id);
+    checarErro(error, 'Erro ao atualizar locação.');
   },
 };
 

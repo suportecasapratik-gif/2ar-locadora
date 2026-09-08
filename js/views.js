@@ -130,9 +130,14 @@ async function carregarClientes() {
         <option value="ativo">Ativo</option>
         <option value="inativo">Inativo</option>
       </select>
+      <button class="btn-secundario" id="btn-exportar-clientes">Exportar CSV</button>
     </div>
     <div class="tabela-wrap"><table><thead><tr><th>Nome</th><th>Telefone</th><th>CPF</th><th>CNH</th><th>Status</th><th></th></tr></thead><tbody id="tbody-clientes"></tbody></table></div>
   `;
+  document.getElementById('btn-exportar-clientes').onclick = () => exportarCSV('clientes',
+    [{ titulo: 'Nome', campo: 'nome' }, { titulo: 'Telefone', campo: 'telefone' }, { titulo: 'CPF', campo: 'cpf' },
+     { titulo: 'RG', campo: 'rg' }, { titulo: 'CNH', campo: 'cnh' }, { titulo: 'Profissão', campo: 'profissao' },
+     { titulo: 'Status', campo: 'status' }], CACHE_CLIENTES);
   document.getElementById('btn-novo-cliente').onclick = () => formCliente();
   document.getElementById('busca-cliente').addEventListener('input', (e) => renderClientes(e.target.value, document.getElementById('filtro-status-cliente').value));
   document.getElementById('filtro-status-cliente').addEventListener('change', (e) => renderClientes(document.getElementById('busca-cliente').value, e.target.value));
@@ -387,9 +392,14 @@ async function carregarVeiculos() {
         <option value="vendido">Vendido</option>
         <option value="manutencao">Manutenção</option>
       </select>
+      <button class="btn-secundario" id="btn-exportar-veiculos">Exportar CSV</button>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Placa</th><th>Veículo</th><th>Ano</th><th>Status</th><th>Venda</th><th>Diária</th><th></th></tr></thead><tbody id="tbody-veiculos"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Placa</th><th>Veículo</th><th>Ano</th><th>Status</th><th>Venda</th><th>Diária</th><th></th></tr></thead><tbody id="tbody-veiculos"></tbody></table></div>
   `;
+  document.getElementById('btn-exportar-veiculos').onclick = () => exportarCSV('veiculos',
+    [{ titulo: 'Placa', campo: 'placa' }, { titulo: 'Marca', campo: 'marca' }, { titulo: 'Modelo', campo: 'modelo' },
+     { titulo: 'Ano', campo: 'ano' }, { titulo: 'Status', campo: 'status' }, { titulo: 'Valor venda', campo: 'valor_venda' },
+     { titulo: 'Valor diária', campo: 'valor_diaria' }, { titulo: 'KM', campo: 'km' }], CACHE_VEICULOS);
   document.getElementById('btn-novo-veiculo').onclick = () => formVeiculo();
   document.getElementById('filtro-status-veiculo').addEventListener('change', (e) => renderVeiculos(e.target.value));
   await renderVeiculos();
@@ -402,6 +412,7 @@ async function renderVeiculos(status) {
     if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum veículo cadastrado ainda.</td></tr>`; return; }
     tbody.innerHTML = lista.map(v => `
       <tr>
+        <td>${v.foto_url ? `<img src="${v.foto_url}" alt="${v.placa}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
         <td>${v.placa}</td><td>${v.marca ? v.marca + ' ' : ''}${v.modelo}</td><td>${v.ano || '—'}</td>
         <td><span class="tag tag-${v.status}">${rotuloStatusVeiculo(v.status)}</span></td>
         <td>${v.valor_venda ? moeda(v.valor_venda) : '—'}</td>
@@ -423,11 +434,13 @@ async function excluirVeiculo(id) {
   } catch (err) { toast(err.message, true); }
 }
 async function formVeiculo(id) {
-  let v = { placa: '', marca: '', modelo: '', ano: '', cor: '', status: 'disponivel', valor_venda: '', valor_diaria: '', km: '' };
+  let v = { placa: '', marca: '', modelo: '', ano: '', cor: '', status: 'disponivel', valor_venda: '', valor_diaria: '', km: '', foto_url: '' };
   if (id) v = CACHE_VEICULOS.find(x => x.id === id) || v;
   abrirModal(`
     <h2>${id ? 'Editar veículo' : 'Novo veículo'}</h2>
     <form id="form-veiculo">
+      ${v.foto_url ? `<img src="${v.foto_url}" alt="Foto atual" class="thumb-preview" />` : ''}
+      <label>Foto do veículo<input type="file" id="v-foto" accept="image/*" /></label>
       <div class="form-linha">
         <label>Placa<input required id="v-placa" value="${v.placa}" ${id ? 'disabled' : ''} /></label>
         <label>Ano<input id="v-ano" type="number" value="${v.ano || ''}" /></label>
@@ -448,15 +461,17 @@ async function formVeiculo(id) {
         <select id="v-status">
           ${['disponivel', 'alugado', 'vendido', 'manutencao'].map(s => `<option value="${s}" ${s === v.status ? 'selected' : ''}>${rotuloStatusVeiculo(s)}</option>`).join('')}
         </select></label>` : ''}
+      <p class="erro" id="v-erro"></p>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
-        <button type="submit" class="btn-primario">Salvar</button>
+        <button type="submit" class="btn-primario" id="v-btn-salvar">Salvar</button>
       </div>
     </form>`);
   document.getElementById('form-veiculo').addEventListener('submit', async (e) => {
     e.preventDefault();
+    const placa = document.getElementById('v-placa').value.trim().toUpperCase();
     const dados = {
-      placa: document.getElementById('v-placa').value.trim().toUpperCase(),
+      placa,
       marca: document.getElementById('v-marca').value.trim(),
       modelo: document.getElementById('v-modelo').value.trim(),
       ano: Number(document.getElementById('v-ano').value) || null,
@@ -465,7 +480,15 @@ async function formVeiculo(id) {
       valor_venda: Number(document.getElementById('v-venda').value) || null,
       valor_diaria: Number(document.getElementById('v-diaria').value) || null,
     };
+    const erroEl = document.getElementById('v-erro');
+    const btnSalvar = document.getElementById('v-btn-salvar');
+    erroEl.textContent = '';
     try {
+      const arquivo = document.getElementById('v-foto').files[0];
+      if (arquivo) {
+        btnSalvar.textContent = 'Enviando foto...';
+        dados.foto_url = await veiculosApi.enviarFoto(placa, arquivo);
+      }
       if (id) {
         dados.status = document.getElementById('v-status').value;
         await veiculosApi.atualizar(id, dados);
@@ -474,7 +497,10 @@ async function formVeiculo(id) {
         await veiculosApi.criar(dados);
       }
       fecharModal(); toast('Veículo salvo.'); renderVeiculos();
-    } catch (err) { toast(err.message, true); }
+    } catch (err) {
+      erroEl.textContent = err.message;
+      btnSalvar.textContent = 'Salvar';
+    }
   });
 }
 
@@ -654,12 +680,45 @@ async function renderLocacoes(busca) {
         <td>${dataBr(l.data_fim_prevista)}</td><td>${moeda(l.valor_diaria)}</td>
         <td><span class="tag tag-${statusExibicaoLocacao(l)}">${rotuloStatusLocacao(statusExibicaoLocacao(l))}</span></td>
         <td>${l.status === 'ativa'
-          ? `<button class="btn-secundario" onclick="finalizarLocacao(${l.id}, ${l.veiculo_id})">Finalizar</button>
+          ? `<button class="btn-secundario" onclick="editarLocacao(${l.id})">Editar</button>
+             <button class="btn-secundario" onclick="finalizarLocacao(${l.id}, ${l.veiculo_id})">Finalizar</button>
              <button class="btn-secundario" onclick="cancelarLocacao(${l.id}, ${l.veiculo_id})">Cancelar</button>`
           : ''}
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirLocacao(${l.id})">Excluir</button>` : ''}
         </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function editarLocacao(id) {
+  try {
+    const lista = await locacoesApi.listar();
+    const l = lista.find(x => x.id === id);
+    if (!l) return;
+    abrirModal(`
+      <h2>Editar locação</h2>
+      <p class="sub" style="margin-bottom:12px">${l.placa} — ${l.modelo} · ${l.cliente_nome}</p>
+      <form id="form-editar-locacao">
+        <div class="form-linha">
+          <label>Início<input required id="el-inicio" type="date" value="${l.data_inicio}" /></label>
+          <label>Fim previsto<input id="el-fim" type="date" value="${l.data_fim_prevista || ''}" /></label>
+        </div>
+        <label>Valor da diária (R$)<input required id="el-diaria" type="number" step="0.01" value="${l.valor_diaria}" /></label>
+        <div class="modal-acoes">
+          <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
+          <button type="submit" class="btn-primario">Salvar</button>
+        </div>
+      </form>`);
+    document.getElementById('form-editar-locacao').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try {
+        await locacoesApi.atualizar(id, {
+          data_inicio: document.getElementById('el-inicio').value,
+          data_fim_prevista: document.getElementById('el-fim').value || null,
+          valor_diaria: Number(document.getElementById('el-diaria').value),
+        });
+        fecharModal(); toast('Locação atualizada.'); renderLocacoes();
+      } catch (err) { toast(err.message, true); }
+    });
   } catch (err) { toast(err.message, true); }
 }
 async function excluirLocacao(id) {
