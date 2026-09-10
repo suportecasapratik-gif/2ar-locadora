@@ -91,18 +91,36 @@ const dashboardApi = {
   async vencendoEmBreve() {
     const hoje = new Date().toISOString().slice(0, 10);
     const em7dias = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    const { data, error } = await sb
-      .from('fiados')
-      .select('*, clientes(nome), fiado_pagamentos(valor)')
+
+    const { data: parcelas, error: e1 } = await sb
+      .from('fiado_parcelas')
+      .select('*, fiados(descricao, clientes(nome))')
+      .eq('status', 'pendente')
       .gte('vencimento', hoje)
       .lte('vencimento', em7dias)
-      .neq('status', 'quitado')
       .order('vencimento', { ascending: true });
-    checarErro(error, 'Erro ao carregar fiados a vencer.');
-    return (data || []).map(f => {
-      const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
-      return { ...f, cliente_nome: f.clientes?.nome, saldo: f.valor_total - pago };
-    });
+    checarErro(e1, 'Erro ao carregar parcelas a vencer.');
+
+    const { data: fiadosSimples, error: e2 } = await sb
+      .from('fiados')
+      .select('*, clientes(nome), fiado_pagamentos(valor), fiado_parcelas(id)')
+      .neq('status', 'quitado')
+      .gte('vencimento', hoje)
+      .lte('vencimento', em7dias);
+    checarErro(e2, 'Erro ao carregar fiados a vencer.');
+
+    const doParcelas = (parcelas || []).map(p => ({
+      cliente_nome: p.fiados?.clientes?.nome, descricao: `${p.fiados?.descricao} (parcela ${p.numero})`,
+      saldo: p.valor, vencimento: p.vencimento,
+    }));
+    const doSimples = (fiadosSimples || [])
+      .filter(f => !f.fiado_parcelas?.length) // evita duplicar quem já apareceu via parcelas
+      .map(f => {
+        const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
+        return { cliente_nome: f.clientes?.nome, descricao: f.descricao, saldo: f.valor_total - pago, vencimento: f.vencimento };
+      });
+
+    return [...doParcelas, ...doSimples].sort((a, b) => a.vencimento.localeCompare(b.vencimento));
   },
 
   // Clientes ativos com CNH cadastrada e vencida (ou vencendo em 30 dias) —
@@ -215,20 +233,43 @@ const fiadoApi = {
   async listar(status) {
     let query = sb
       .from('fiados')
-      .select('*, clientes(nome), fiado_pagamentos(valor)')
+      .select('*, clientes(nome), fiado_pagamentos(valor), fiado_parcelas(*)')
       .order('data_venda', { ascending: false });
-    if (status) query = query.eq('status', status);
     const { data, error } = await query;
     checarErro(error, 'Erro ao carregar fiados.');
-    return (data || []).map(f => {
-      const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
-      return { ...f, cliente_nome: f.clientes?.nome, valor_pago: pago, saldo: f.valor_total - pago };
-    });
+    let lista = (data || []).map(f => enriquecerFiado(f));
+    if (status) lista = lista.filter(f => f.status === status);
+    return lista;
   },
   async criar(dados) {
     const { data, error } = await sb.from('fiados').insert(dados).select().single();
     checarErro(error, 'Erro ao registrar fiado.');
     return data;
+  },
+  // Cria um fiado já com N parcelas geradas (mensal, a partir da primeira data).
+  async criarComParcelas({ cliente_id, descricao, numero_parcelas, valor_parcela, primeira_data, criado_por }) {
+    const valorTotal = numero_parcelas * valor_parcela;
+    const { data: fiado, error: e1 } = await sb
+      .from('fiados')
+      .insert({ cliente_id, descricao, valor_total: valorTotal, vencimento: primeira_data, criado_por })
+      .select().single();
+    checarErro(e1, 'Erro ao registrar fiado.');
+
+    const parcelas = [];
+    for (let i = 0; i < numero_parcelas; i++) {
+      const d = new Date(primeira_data + 'T00:00:00');
+      d.setMonth(d.getMonth() + i);
+      parcelas.push({
+        fiado_id: fiado.id,
+        numero: i + 1,
+        valor: valor_parcela,
+        vencimento: d.toISOString().slice(0, 10),
+        registrado_por: criado_por,
+      });
+    }
+    const { error: e2 } = await sb.from('fiado_parcelas').insert(parcelas);
+    checarErro(e2, 'Fiado criado, mas houve erro ao gerar as parcelas.');
+    return fiado;
   },
   async atualizar(id, dados) {
     const { error } = await sb.from('fiados').update(dados).eq('id', id);
@@ -242,13 +283,62 @@ const fiadoApi = {
     const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
     checarErro(e2, 'Pagamento salvo, mas o status não pôde ser recalculado.');
   },
+  // Marca uma parcela específica como paga e recalcula o status do fiado.
+  async pagarParcela(parcelaId, fiadoId) {
+    const { error: e1 } = await sb
+      .from('fiado_parcelas')
+      .update({ status: 'pago', pago_em: new Date().toISOString().slice(0, 10) })
+      .eq('id', parcelaId);
+    checarErro(e1, 'Erro ao registrar pagamento da parcela.');
+
+    const { data: parcelas, error: e2 } = await sb.from('fiado_parcelas').select('*').eq('fiado_id', fiadoId);
+    checarErro(e2, 'Parcela paga, mas não foi possível atualizar o status geral.');
+    const hoje = new Date().toISOString().slice(0, 10);
+    const pendentes = parcelas.filter(p => p.status === 'pendente');
+    let novoStatus;
+    if (!pendentes.length) novoStatus = 'quitado';
+    else if (pendentes.some(p => p.vencimento < hoje)) novoStatus = 'atrasado';
+    else if (pendentes.length < parcelas.length) novoStatus = 'parcial';
+    else novoStatus = 'aberto';
+    const proxima = pendentes.sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
+    const { error: e3 } = await sb.from('fiados').update({ status: novoStatus, vencimento: proxima?.vencimento || null }).eq('id', fiadoId);
+    checarErro(e3, 'Parcela paga, mas o status do fiado não pôde ser atualizado.');
+  },
   async excluir(id) {
+    const { error: e0 } = await sb.from('fiado_parcelas').delete().eq('fiado_id', id);
+    checarErro(e0, 'Erro ao excluir as parcelas deste fiado.');
     const { error: e1 } = await sb.from('fiado_pagamentos').delete().eq('fiado_id', id);
     checarErro(e1, 'Erro ao excluir os pagamentos deste fiado.');
     const { error: e2 } = await sb.from('fiados').delete().eq('id', id);
     checarErro(e2, 'Erro ao excluir fiado.');
   },
 };
+
+// Junta os dois modelos de fiado (parcelado e livre) num só formato pra tela.
+function enriquecerFiado(f) {
+  const nome = f.clientes?.nome;
+  if (f.fiado_parcelas && f.fiado_parcelas.length) {
+    const parcelas = [...f.fiado_parcelas].sort((a, b) => a.numero - b.numero);
+    const pagas = parcelas.filter(p => p.status === 'pago');
+    const pendentes = parcelas.filter(p => p.status === 'pendente');
+    const saldo = pendentes.reduce((s, p) => s + Number(p.valor), 0);
+    const hoje = new Date().toISOString().slice(0, 10);
+    let status;
+    if (!pendentes.length) status = 'quitado';
+    else if (pendentes.some(p => p.vencimento < hoje)) status = 'atrasado';
+    else if (pagas.length) status = 'parcial';
+    else status = 'aberto';
+    const proxima = pendentes[0];
+    return {
+      ...f, cliente_nome: nome, valor_pago: f.valor_total - saldo, saldo, status,
+      parcelas, tem_parcelas: true,
+      parcela_atual: pagas.length + (pendentes.length ? 1 : 0), total_parcelas: parcelas.length,
+      vencimento: proxima?.vencimento || f.vencimento,
+    };
+  }
+  const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
+  return { ...f, cliente_nome: nome, valor_pago: pago, saldo: f.valor_total - pago, tem_parcelas: false };
+}
 
 // ---------- LOCAÇÕES ----------
 const locacoesApi = {

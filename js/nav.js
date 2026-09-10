@@ -29,6 +29,7 @@ function mostrarView(nome) {
   document.getElementById(`view-${nome}`).classList.remove('oculto');
   const carregadores = {
     dashboard: carregarDashboard,
+    operacional: carregarOperacional,
     fiado: carregarFiado,
     locacoes: carregarLocacoes,
     vendas: carregarVendas,

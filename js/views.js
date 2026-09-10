@@ -26,6 +26,51 @@ function statusExibicaoLocacao(l) {
   return l.status;
 }
 
+// ---------- OPERACIONAL ----------
+async function carregarOperacional() {
+  const el = document.getElementById('view-operacional');
+  el.innerHTML = `
+    <div class="view-header"><div><h1>Operacional</h1><div class="sub">Tudo o que está em aberto agora — o que cobrar, o que devolver</div></div></div>
+    <div class="painel-grafico" id="op-cobrar-hoje" style="margin-bottom:24px"></div>
+    <div class="painel-grafico" id="op-fiados" style="margin-bottom:24px"></div>
+    <div class="painel-grafico" id="op-locacoes"></div>
+  `;
+  try {
+    const [fiados, locacoes] = await Promise.all([fiadoApi.listar(), locacoesApi.listar()]);
+    const hoje = new Date().toISOString().slice(0, 10);
+
+    const fiadosAbertos = fiados.filter(f => f.saldo > 0).sort((a, b) => (a.vencimento || '9999').localeCompare(b.vencimento || '9999'));
+    const locacoesAtivas = locacoes.filter(l => l.status === 'ativa').sort((a, b) => (a.data_fim_prevista || '9999').localeCompare(b.data_fim_prevista || '9999'));
+
+    const fiadosParaHoje = fiadosAbertos.filter(f => f.vencimento && f.vencimento <= hoje);
+    const locacoesParaHoje = locacoesAtivas.filter(l => l.data_fim_prevista && l.data_fim_prevista <= hoje);
+
+    document.getElementById('op-cobrar-hoje').innerHTML = `
+      <h2 class="grafico-titulo">Cobrar / resolver hoje (${fiadosParaHoje.length + locacoesParaHoje.length})</h2>
+      ${fiadosParaHoje.length || locacoesParaHoje.length
+        ? [
+            ...fiadosParaHoje.map(f => `<div class="hist-item"><span>Fiado — ${f.cliente_nome} (${f.descricao})</span><span class="tag tag-atrasado">${moeda(f.saldo)}</span></div>`),
+            ...locacoesParaHoje.map(l => `<div class="hist-item"><span>Locação — ${l.cliente_nome} (${l.placa} — ${l.modelo})</span><span class="tag tag-atrasado">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`),
+          ].join('')
+        : `<p class="sub">Nada vencido ou vencendo hoje. 🎉</p>`}
+    `;
+
+    document.getElementById('op-fiados').innerHTML = `
+      <h2 class="grafico-titulo">Fiados em aberto (${fiadosAbertos.length})</h2>
+      ${fiadosAbertos.length
+        ? fiadosAbertos.map(f => `<div class="hist-item"><span>${f.cliente_nome} — ${f.descricao}${f.tem_parcelas ? ` (parcela ${f.parcela_atual}/${f.total_parcelas})` : ''}</span><span class="tag tag-${f.status}">${moeda(f.saldo)} · ${dataBr(f.vencimento)}</span></div>`).join('')
+        : `<p class="sub">Nenhum fiado em aberto.</p>`}
+    `;
+
+    document.getElementById('op-locacoes').innerHTML = `
+      <h2 class="grafico-titulo">Locações ativas (${locacoesAtivas.length})</h2>
+      ${locacoesAtivas.length
+        ? locacoesAtivas.map(l => `<div class="hist-item"><span>${l.cliente_nome} — ${l.placa} (${l.modelo})</span><span class="tag ${l.data_fim_prevista && l.data_fim_prevista < hoje ? 'tag-atrasado' : 'tag-ativa'}">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`).join('')
+        : `<p class="sub">Nenhuma locação ativa no momento.</p>`}
+    `;
+  } catch (err) { toast(err.message, true); }
+}
+
 // ---------- PAINEL ----------
 let GRAFICO_RECEITA = null;
 
@@ -548,7 +593,7 @@ async function carregarFiado() {
         <option value="atrasado">Atrasado</option>
       </select>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   document.getElementById('btn-novo-fiado').onclick = () => formFiado();
@@ -565,17 +610,53 @@ async function renderFiado(status, busca) {
       lista = lista.filter(f => f.cliente_nome?.toLowerCase().includes(termo) || f.descricao?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-fiado');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="8" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
     tbody.innerHTML = lista.map(f => `
       <tr>
         <td>${f.cliente_nome}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
+        <td>${f.tem_parcelas ? `${f.parcela_atual}/${f.total_parcelas}` : '—'}</td>
         <td>${dataBr(f.vencimento)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td>
         <td>
-          ${f.saldo > 0 ? `<button class="btn-secundario" onclick="formPagamento(${f.id}, ${f.saldo})">Receber</button>` : ''}
-          ${f.valor_pago === 0 ? `<button class="btn-secundario" onclick="editarFiado(${f.id})">Editar</button>` : ''}
+          ${f.tem_parcelas
+            ? (f.saldo > 0 ? `<button class="btn-secundario" onclick="verParcelas(${f.id})">Ver parcelas</button>` : '')
+            : (f.saldo > 0 ? `<button class="btn-secundario" onclick="formPagamento(${f.id}, ${f.saldo})">Receber</button>` : '')}
+          ${(!f.tem_parcelas && f.valor_pago === 0) ? `<button class="btn-secundario" onclick="editarFiado(${f.id})">Editar</button>` : ''}
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirFiado(${f.id})">Excluir</button>` : ''}
         </td>
       </tr>`).join('');
+  } catch (err) { toast(err.message, true); }
+}
+async function verParcelas(fiadoId) {
+  try {
+    const lista = await fiadoApi.listar();
+    const f = lista.find(x => x.id === fiadoId);
+    if (!f) return;
+    const hoje = new Date().toISOString().slice(0, 10);
+    abrirModal(`
+      <h2>Parcelas — ${f.cliente_nome}</h2>
+      <p class="sub" style="margin-bottom:12px">${f.descricao} · Total ${moeda(f.valor_total)}</p>
+      <div class="tabela-wrap" style="border:none">
+        ${f.parcelas.map(p => `
+          <div class="hist-item">
+            <span>Parcela ${p.numero}/${f.total_parcelas} — vence ${dataBr(p.vencimento)}${p.status === 'pendente' && p.vencimento < hoje ? ' <span class="tag tag-atrasado">Atrasada</span>' : ''}</span>
+            <span style="display:flex; align-items:center; gap:8px">
+              ${moeda(p.valor)}
+              ${p.status === 'pago'
+                ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span>`
+                : `<button class="btn-secundario" onclick="pagarParcela(${p.id}, ${fiadoId})">Marcar paga</button>`}
+            </span>
+          </div>`).join('')}
+      </div>
+      <div class="modal-acoes"><button type="button" class="btn-secundario" onclick="fecharModal()">Fechar</button></div>
+    `);
+  } catch (err) { toast(err.message, true); }
+}
+async function pagarParcela(parcelaId, fiadoId) {
+  try {
+    await fiadoApi.pagarParcela(parcelaId, fiadoId);
+    toast('Parcela paga registrada.');
+    verParcelas(fiadoId);
+    renderFiado();
   } catch (err) { toast(err.message, true); }
 }
 async function editarFiado(id) {
@@ -625,26 +706,72 @@ async function formFiado() {
     <form id="form-fiado">
       <label>Cliente<select required id="f-cliente">${opcoesClientes()}</select></label>
       <label>Descrição<input required id="f-desc" placeholder="Ex: peças, manutenção, acessórios..." /></label>
-      <div class="form-linha">
-        <label>Valor total (R$)<input required id="f-valor" type="number" step="0.01" /></label>
-        <label>Vencimento<input id="f-venc" type="date" /></label>
+      <label style="flex-direction:row; align-items:center; gap:8px">
+        <input type="checkbox" id="f-tem-parcelas" style="width:auto" /> Dividir em parcelas
+      </label>
+
+      <div id="f-bloco-simples">
+        <div class="form-linha">
+          <label>Valor total (R$)<input id="f-valor" type="number" step="0.01" /></label>
+          <label>Vencimento<input id="f-venc" type="date" /></label>
+        </div>
       </div>
+
+      <div id="f-bloco-parcelas" class="oculto">
+        <div class="form-linha">
+          <label>Número de parcelas<input id="f-num-parcelas" type="number" min="2" value="2" /></label>
+          <label>Valor de cada parcela (R$)<input id="f-valor-parcela" type="number" step="0.01" /></label>
+        </div>
+        <label>Vencimento da 1ª parcela<input id="f-primeira-data" type="date" /></label>
+        <p class="sub" id="f-resumo-parcelas"></p>
+      </div>
+
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Registrar</button>
       </div>
     </form>`);
+
+  const checkParcelas = document.getElementById('f-tem-parcelas');
+  const blocoSimples = document.getElementById('f-bloco-simples');
+  const blocoParcelas = document.getElementById('f-bloco-parcelas');
+  checkParcelas.addEventListener('change', () => {
+    blocoSimples.classList.toggle('oculto', checkParcelas.checked);
+    blocoParcelas.classList.toggle('oculto', !checkParcelas.checked);
+    document.getElementById('f-valor').required = !checkParcelas.checked;
+    document.getElementById('f-num-parcelas').required = checkParcelas.checked;
+    document.getElementById('f-valor-parcela').required = checkParcelas.checked;
+    document.getElementById('f-primeira-data').required = checkParcelas.checked;
+  });
+  const atualizarResumo = () => {
+    const n = Number(document.getElementById('f-num-parcelas').value) || 0;
+    const v = Number(document.getElementById('f-valor-parcela').value) || 0;
+    document.getElementById('f-resumo-parcelas').textContent = n && v ? `Total: ${n}x de ${moeda(v)} = ${moeda(n * v)}` : '';
+  };
+  document.getElementById('f-num-parcelas').addEventListener('input', atualizarResumo);
+  document.getElementById('f-valor-parcela').addEventListener('input', atualizarResumo);
+
   document.getElementById('form-fiado').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const dados = {
-      cliente_id: Number(document.getElementById('f-cliente').value),
-      descricao: document.getElementById('f-desc').value.trim(),
-      valor_total: Number(document.getElementById('f-valor').value),
-      vencimento: document.getElementById('f-venc').value || null,
-      criado_por: PERFIL.id,
-    };
+    const cliente_id = Number(document.getElementById('f-cliente').value);
+    const descricao = document.getElementById('f-desc').value.trim();
     try {
-      await fiadoApi.criar(dados);
+      if (checkParcelas.checked) {
+        await fiadoApi.criarComParcelas({
+          cliente_id, descricao,
+          numero_parcelas: Number(document.getElementById('f-num-parcelas').value),
+          valor_parcela: Number(document.getElementById('f-valor-parcela').value),
+          primeira_data: document.getElementById('f-primeira-data').value,
+          criado_por: PERFIL.id,
+        });
+      } else {
+        await fiadoApi.criar({
+          cliente_id, descricao,
+          valor_total: Number(document.getElementById('f-valor').value),
+          vencimento: document.getElementById('f-venc').value || null,
+          criado_por: PERFIL.id,
+        });
+      }
       fecharModal(); toast('Fiado registrado.'); renderFiado();
     } catch (err) { toast(err.message, true); }
   });
@@ -763,6 +890,7 @@ async function formLocacao() {
     <form id="form-locacao">
       <label>Veículo<select required id="l-veiculo">${opcoesVeiculos(disponiveis)}</select></label>
       <label>Cliente<select required id="l-cliente">${opcoesClientes()}</select></label>
+      <p class="erro" id="l-aviso-cnh"></p>
       <div class="form-linha">
         <label>Início<input required id="l-inicio" type="date" /></label>
         <label>Fim previsto<input id="l-fim" type="date" /></label>
@@ -780,6 +908,19 @@ async function formLocacao() {
   };
   vSel.addEventListener('change', preencherDiaria);
   preencherDiaria();
+
+  const cSel = document.getElementById('l-cliente');
+  const avisoEl = document.getElementById('l-aviso-cnh');
+  const conferirCnh = () => {
+    const c = CACHE_CLIENTES.find(x => x.id == cSel.value);
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (!c?.cnh) avisoEl.textContent = 'Atenção: este cliente não tem CNH cadastrada.';
+    else if (c.cnh_vencimento && c.cnh_vencimento < hoje) avisoEl.textContent = `Atenção: a CNH deste cliente está vencida (${dataBr(c.cnh_vencimento)}).`;
+    else avisoEl.textContent = '';
+  };
+  cSel.addEventListener('change', conferirCnh);
+  conferirCnh();
+
   document.getElementById('form-locacao').addEventListener('submit', async (e) => {
     e.preventDefault();
     const dados = {
