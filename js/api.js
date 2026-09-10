@@ -233,7 +233,7 @@ const fiadoApi = {
   async listar(status) {
     let query = sb
       .from('fiados')
-      .select('*, clientes(nome), fiado_pagamentos(valor), fiado_parcelas(*)')
+      .select('*, clientes(nome), veiculos(placa,modelo), fiado_pagamentos(valor), fiado_parcelas(*)')
       .order('data_venda', { ascending: false });
     const { data, error } = await query;
     checarErro(error, 'Erro ao carregar fiados.');
@@ -244,14 +244,15 @@ const fiadoApi = {
   async criar(dados) {
     const { data, error } = await sb.from('fiados').insert(dados).select().single();
     checarErro(error, 'Erro ao registrar fiado.');
+    if (dados.veiculo_id) await marcarVeiculoFiado(dados.veiculo_id);
     return data;
   },
   // Cria um fiado já com N parcelas geradas (mensal, a partir da primeira data).
-  async criarComParcelas({ cliente_id, descricao, numero_parcelas, valor_parcela, primeira_data, criado_por }) {
+  async criarComParcelas({ cliente_id, descricao, veiculo_id, numero_parcelas, valor_parcela, primeira_data, criado_por }) {
     const valorTotal = numero_parcelas * valor_parcela;
     const { data: fiado, error: e1 } = await sb
       .from('fiados')
-      .insert({ cliente_id, descricao, valor_total: valorTotal, vencimento: primeira_data, criado_por })
+      .insert({ cliente_id, descricao, veiculo_id: veiculo_id || null, valor_total: valorTotal, vencimento: primeira_data, criado_por })
       .select().single();
     checarErro(e1, 'Erro ao registrar fiado.');
 
@@ -269,6 +270,7 @@ const fiadoApi = {
     }
     const { error: e2 } = await sb.from('fiado_parcelas').insert(parcelas);
     checarErro(e2, 'Fiado criado, mas houve erro ao gerar as parcelas.');
+    if (veiculo_id) await marcarVeiculoFiado(veiculo_id);
     return fiado;
   },
   async atualizar(id, dados) {
@@ -282,6 +284,7 @@ const fiadoApi = {
     checarErro(e1, 'Erro ao registrar pagamento.');
     const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
     checarErro(e2, 'Pagamento salvo, mas o status não pôde ser recalculado.');
+    await liberarVeiculoSeQuitado(fiadoId);
   },
   // Marca uma parcela específica como paga e recalcula o status do fiado.
   async pagarParcela(parcelaId, fiadoId) {
@@ -303,20 +306,47 @@ const fiadoApi = {
     const proxima = pendentes.sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
     const { error: e3 } = await sb.from('fiados').update({ status: novoStatus, vencimento: proxima?.vencimento || null }).eq('id', fiadoId);
     checarErro(e3, 'Parcela paga, mas o status do fiado não pôde ser atualizado.');
+    if (novoStatus === 'quitado') await liberarVeiculoSeQuitado(fiadoId);
+  },
+  // Muda o valor e/ou a data de uma parcela específica (ex: mover a entrada pro
+  // final, ou ajustar valores desiguais). Também refaz o valor_total do fiado.
+  async editarParcela(parcelaId, fiadoId, { valor, vencimento }) {
+    const { error: e1 } = await sb.from('fiado_parcelas').update({ valor, vencimento }).eq('id', parcelaId);
+    checarErro(e1, 'Erro ao atualizar a parcela.');
+    const { data: parcelas, error: e2 } = await sb.from('fiado_parcelas').select('valor').eq('fiado_id', fiadoId);
+    checarErro(e2, 'Parcela atualizada, mas não foi possível recalcular o total.');
+    const novoTotal = (parcelas || []).reduce((s, p) => s + Number(p.valor), 0);
+    const { error: e3 } = await sb.from('fiados').update({ valor_total: novoTotal }).eq('id', fiadoId);
+    checarErro(e3, 'Parcela atualizada, mas o total do fiado não pôde ser ajustado.');
   },
   async excluir(id) {
+    const { data: fiado } = await sb.from('fiados').select('veiculo_id, status').eq('id', id).single();
     const { error: e0 } = await sb.from('fiado_parcelas').delete().eq('fiado_id', id);
     checarErro(e0, 'Erro ao excluir as parcelas deste fiado.');
     const { error: e1 } = await sb.from('fiado_pagamentos').delete().eq('fiado_id', id);
     checarErro(e1, 'Erro ao excluir os pagamentos deste fiado.');
     const { error: e2 } = await sb.from('fiados').delete().eq('id', id);
     checarErro(e2, 'Erro ao excluir fiado.');
+    if (fiado?.veiculo_id) {
+      const { error: e3 } = await sb.from('veiculos').update({ status: 'disponivel' }).eq('id', fiado.veiculo_id);
+      checarErro(e3, 'Fiado excluído, mas o veículo não pôde ser liberado — ajuste o status dele manualmente.');
+    }
   },
 };
 
-// Junta os dois modelos de fiado (parcelado e livre) num só formato pra tela.
+async function marcarVeiculoFiado(veiculoId) {
+  const { error } = await sb.from('veiculos').update({ status: 'fiado' }).eq('id', veiculoId);
+  checarErro(error, 'Fiado criado, mas o status do veículo não pôde ser atualizado.');
+}
+async function liberarVeiculoSeQuitado(fiadoId) {
+  const { data: fiado } = await sb.from('fiados').select('veiculo_id').eq('id', fiadoId).single();
+  if (fiado?.veiculo_id) {
+    await sb.from('veiculos').update({ status: 'vendido' }).eq('id', fiado.veiculo_id);
+  }
+}
 function enriquecerFiado(f) {
   const nome = f.clientes?.nome;
+  const veiculoTexto = f.veiculos ? `${f.veiculos.placa} — ${f.veiculos.modelo}` : null;
   if (f.fiado_parcelas && f.fiado_parcelas.length) {
     const parcelas = [...f.fiado_parcelas].sort((a, b) => a.numero - b.numero);
     const pagas = parcelas.filter(p => p.status === 'pago');
@@ -330,14 +360,14 @@ function enriquecerFiado(f) {
     else status = 'aberto';
     const proxima = pendentes[0];
     return {
-      ...f, cliente_nome: nome, valor_pago: f.valor_total - saldo, saldo, status,
+      ...f, cliente_nome: nome, veiculo_texto: veiculoTexto, valor_pago: f.valor_total - saldo, saldo, status,
       parcelas, tem_parcelas: true,
       parcela_atual: pagas.length + (pendentes.length ? 1 : 0), total_parcelas: parcelas.length,
       vencimento: proxima?.vencimento || f.vencimento,
     };
   }
   const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
-  return { ...f, cliente_nome: nome, valor_pago: pago, saldo: f.valor_total - pago, tem_parcelas: false };
+  return { ...f, cliente_nome: nome, veiculo_texto: veiculoTexto, valor_pago: pago, saldo: f.valor_total - pago, tem_parcelas: false };
 }
 
 // ---------- LOCAÇÕES ----------

@@ -12,7 +12,7 @@ function opcoesVeiculos(lista) {
   return lista.map(v => `<option value="${v.id}">${v.placa} — ${v.modelo}</option>`).join('');
 }
 function rotuloStatusVeiculo(s) {
-  return { disponivel: 'Disponível', alugado: 'Alugado', vendido: 'Vendido', manutencao: 'Manutenção' }[s] || s;
+  return { disponivel: 'Disponível', alugado: 'Alugado', vendido: 'Vendido', manutencao: 'Manutenção', fiado: 'Vendido (fiado)' }[s] || s;
 }
 function rotuloStatusFiado(s) {
   return { aberto: 'Aberto', parcial: 'Parcial', quitado: 'Quitado', atrasado: 'Atrasado' }[s] || s;
@@ -455,6 +455,7 @@ async function carregarVeiculos() {
         <option value="disponivel">Disponível</option>
         <option value="alugado">Alugado</option>
         <option value="vendido">Vendido</option>
+        <option value="fiado">Vendido (fiado)</option>
         <option value="manutencao">Manutenção</option>
       </select>
       <button class="btn-secundario" id="btn-exportar-veiculos">Exportar CSV</button>
@@ -530,7 +531,7 @@ async function formVeiculo(id) {
       </div>
       ${id ? `<label>Status
         <select id="v-status">
-          ${['disponivel', 'alugado', 'vendido', 'manutencao'].map(s => `<option value="${s}" ${s === v.status ? 'selected' : ''}>${rotuloStatusVeiculo(s)}</option>`).join('')}
+          ${['disponivel', 'alugado', 'vendido', 'fiado', 'manutencao'].map(s => `<option value="${s}" ${s === v.status ? 'selected' : ''}>${rotuloStatusVeiculo(s)}</option>`).join('')}
         </select></label>` : ''}
       <p class="erro" id="v-erro"></p>
       <div class="modal-acoes">
@@ -593,9 +594,10 @@ async function carregarFiado() {
         <option value="atrasado">Atrasado</option>
       </select>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Veículo</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
+  await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
   document.getElementById('btn-novo-fiado').onclick = () => formFiado();
   const disparar = () => renderFiado(document.getElementById('filtro-status-fiado').value, document.getElementById('busca-fiado').value);
   document.getElementById('filtro-status-fiado').addEventListener('change', disparar);
@@ -610,10 +612,10 @@ async function renderFiado(status, busca) {
       lista = lista.filter(f => f.cliente_nome?.toLowerCase().includes(termo) || f.descricao?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-fiado');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="8" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="9" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
     tbody.innerHTML = lista.map(f => `
       <tr>
-        <td>${f.cliente_nome}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
+        <td>${f.cliente_nome}</td><td>${f.veiculo_texto || '—'}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
         <td>${f.tem_parcelas ? `${f.parcela_atual}/${f.total_parcelas}` : '—'}</td>
         <td>${dataBr(f.vencimento)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td>
         <td>
@@ -643,13 +645,45 @@ async function verParcelas(fiadoId) {
               ${moeda(p.valor)}
               ${p.status === 'pago'
                 ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span>`
-                : `<button class="btn-secundario" onclick="pagarParcela(${p.id}, ${fiadoId})">Marcar paga</button>`}
+                : `<button class="btn-secundario" onclick="editarParcela(${p.id}, ${fiadoId})">Editar</button>
+                   <button class="btn-secundario" onclick="pagarParcela(${p.id}, ${fiadoId})">Marcar paga</button>`}
             </span>
           </div>`).join('')}
       </div>
       <div class="modal-acoes"><button type="button" class="btn-secundario" onclick="fecharModal()">Fechar</button></div>
     `);
   } catch (err) { toast(err.message, true); }
+}
+async function editarParcela(parcelaId, fiadoId) {
+  const lista = await fiadoApi.listar();
+  const f = lista.find(x => x.id === fiadoId);
+  const p = f?.parcelas.find(x => x.id === parcelaId);
+  if (!p) return;
+  abrirModal(`
+    <h2>Editar parcela ${p.numero}/${f.total_parcelas}</h2>
+    <p class="sub" style="margin-bottom:12px">${f.cliente_nome} — ${f.descricao}</p>
+    <form id="form-editar-parcela">
+      <div class="form-linha">
+        <label>Valor (R$)<input required id="ep-valor" type="number" step="0.01" value="${p.valor}" /></label>
+        <label>Vencimento<input required id="ep-venc" type="date" value="${p.vencimento}" /></label>
+      </div>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="verParcelas(${fiadoId})">Cancelar</button>
+        <button type="submit" class="btn-primario">Salvar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-editar-parcela').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await fiadoApi.editarParcela(parcelaId, fiadoId, {
+        valor: Number(document.getElementById('ep-valor').value),
+        vencimento: document.getElementById('ep-venc').value,
+      });
+      toast('Parcela atualizada.');
+      verParcelas(fiadoId);
+      renderFiado();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 async function pagarParcela(parcelaId, fiadoId) {
   try {
@@ -705,6 +739,12 @@ async function formFiado() {
     <h2>Novo fiado</h2>
     <form id="form-fiado">
       <label>Cliente<select required id="f-cliente">${opcoesClientes()}</select></label>
+      <label>Veículo (se for venda fiado)
+        <select id="f-veiculo">
+          <option value="">Nenhum — é outro tipo de fiado (peça, serviço...)</option>
+          ${opcoesVeiculos(CACHE_VEICULOS.filter(v => v.status === 'disponivel'))}
+        </select>
+      </label>
       <label>Descrição<input required id="f-desc" placeholder="Ex: peças, manutenção, acessórios..." /></label>
       <label style="flex-direction:row; align-items:center; gap:8px">
         <input type="checkbox" id="f-tem-parcelas" style="width:auto" /> Dividir em parcelas
@@ -755,10 +795,11 @@ async function formFiado() {
     e.preventDefault();
     const cliente_id = Number(document.getElementById('f-cliente').value);
     const descricao = document.getElementById('f-desc').value.trim();
+    const veiculo_id = Number(document.getElementById('f-veiculo').value) || null;
     try {
       if (checkParcelas.checked) {
         await fiadoApi.criarComParcelas({
-          cliente_id, descricao,
+          cliente_id, descricao, veiculo_id,
           numero_parcelas: Number(document.getElementById('f-num-parcelas').value),
           valor_parcela: Number(document.getElementById('f-valor-parcela').value),
           primeira_data: document.getElementById('f-primeira-data').value,
@@ -766,13 +807,15 @@ async function formFiado() {
         });
       } else {
         await fiadoApi.criar({
-          cliente_id, descricao,
+          cliente_id, descricao, veiculo_id,
           valor_total: Number(document.getElementById('f-valor').value),
           vencimento: document.getElementById('f-venc').value || null,
           criado_por: PERFIL.id,
         });
       }
-      fecharModal(); toast('Fiado registrado.'); renderFiado();
+      fecharModal(); toast('Fiado registrado.');
+      renderFiado();
+      await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
     } catch (err) { toast(err.message, true); }
   });
 }
