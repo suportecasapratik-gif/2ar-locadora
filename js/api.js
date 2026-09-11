@@ -169,16 +169,13 @@ const clientesApi = {
   },
   async historico(id) {
     const [{ data: fiados, error: e1 }, { data: locacoes, error: e2 }, { data: vendas, error: e3 }] = await Promise.all([
-      sb.from('fiados').select('*, fiado_pagamentos(valor)').eq('cliente_id', id).order('data_venda', { ascending: false }),
+      sb.from('fiados').select('*, veiculos(placa,modelo), fiado_pagamentos(valor), fiado_parcelas(*)').eq('cliente_id', id).order('data_venda', { ascending: false }),
       sb.from('locacoes').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_inicio', { ascending: false }),
       sb.from('vendas').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_venda', { ascending: false }),
     ]);
     checarErro(e1 || e2 || e3, 'Erro ao carregar histórico do cliente.');
     return {
-      fiados: (fiados || []).map(f => {
-        const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
-        return { ...f, saldo: f.valor_total - pago };
-      }),
+      fiados: (fiados || []).map(f => enriquecerFiado(f)),
       locacoes: (locacoes || []).map(l => ({ ...l, placa: l.veiculos?.placa, modelo: l.veiculos?.modelo })),
       vendas: (vendas || []).map(v => ({ ...v, placa: v.veiculos?.placa, modelo: v.veiculos?.modelo })),
     };
@@ -191,6 +188,34 @@ const clientesApi = {
     checarErro(error, 'Erro ao enviar a foto.');
     const { data } = sb.storage.from('clientes-fotos').getPublicUrl(caminho);
     return data.publicUrl;
+  },
+  // Situação operacional de cada cliente, calculada a partir dos dados reais
+  // (não é um campo manual): fiado em aberto/atrasado, locação ativa, motos no nome.
+  async situacaoGeral() {
+    const [{ data: fiados }, { data: locacoes }, { data: vendas }] = await Promise.all([
+      sb.from('fiados').select('cliente_id, veiculo_id, valor_total, status, fiado_pagamentos(valor)'),
+      sb.from('locacoes').select('cliente_id, veiculo_id, status, veiculos(placa,modelo)').eq('status', 'ativa'),
+      sb.from('vendas').select('cliente_id, veiculo_id'),
+    ]);
+    const mapa = {};
+    const garantir = (id) => mapa[id] || (mapa[id] = { fiadosAbertos: 0, fiadosAtrasados: 0, locacoesAtivas: [], motos: new Set() });
+    (fiados || []).forEach(f => {
+      const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
+      const saldo = f.valor_total - pago;
+      const m = garantir(f.cliente_id);
+      if (saldo > 0) { m.fiadosAbertos++; if (f.status === 'atrasado') m.fiadosAtrasados++; }
+      if (f.veiculo_id) m.motos.add(f.veiculo_id);
+    });
+    (locacoes || []).forEach(l => {
+      const m = garantir(l.cliente_id);
+      m.locacoesAtivas.push({ placa: l.veiculos?.placa, modelo: l.veiculos?.modelo });
+      if (l.veiculo_id) m.motos.add(l.veiculo_id);
+    });
+    (vendas || []).forEach(v => {
+      const m = garantir(v.cliente_id);
+      if (v.veiculo_id) m.motos.add(v.veiculo_id);
+    });
+    return mapa;
   },
 };
 
@@ -310,14 +335,34 @@ const fiadoApi = {
   },
   // Muda o valor e/ou a data de uma parcela específica (ex: mover a entrada pro
   // final, ou ajustar valores desiguais). Também refaz o valor_total do fiado.
-  async editarParcela(parcelaId, fiadoId, { valor, vencimento }) {
+  async editarParcela(parcelaId, fiadoId, { valor, vencimento }, ajustarProximas) {
+    const { data: atual, error: e0 } = await sb.from('fiado_parcelas').select('numero,vencimento').eq('id', parcelaId).single();
+    checarErro(e0, 'Erro ao localizar a parcela.');
+
     const { error: e1 } = await sb.from('fiado_parcelas').update({ valor, vencimento }).eq('id', parcelaId);
     checarErro(e1, 'Erro ao atualizar a parcela.');
-    const { data: parcelas, error: e2 } = await sb.from('fiado_parcelas').select('valor').eq('fiado_id', fiadoId);
-    checarErro(e2, 'Parcela atualizada, mas não foi possível recalcular o total.');
+
+    if (ajustarProximas && atual) {
+      const deltaDias = Math.round((new Date(vencimento + 'T00:00:00') - new Date(atual.vencimento + 'T00:00:00')) / 86400000);
+      if (deltaDias !== 0) {
+        const { data: proximas, error: e2 } = await sb
+          .from('fiado_parcelas').select('id,vencimento')
+          .eq('fiado_id', fiadoId).eq('status', 'pendente').gt('numero', atual.numero);
+        checarErro(e2, 'Parcela atualizada, mas não foi possível ajustar as próximas.');
+        for (const p of (proximas || [])) {
+          const novaData = new Date(p.vencimento + 'T00:00:00');
+          novaData.setDate(novaData.getDate() + deltaDias);
+          const { error: eU } = await sb.from('fiado_parcelas').update({ vencimento: novaData.toISOString().slice(0, 10) }).eq('id', p.id);
+          checarErro(eU, 'Erro ao ajustar uma das próximas parcelas.');
+        }
+      }
+    }
+
+    const { data: parcelas, error: e3 } = await sb.from('fiado_parcelas').select('valor').eq('fiado_id', fiadoId);
+    checarErro(e3, 'Parcela atualizada, mas não foi possível recalcular o total.');
     const novoTotal = (parcelas || []).reduce((s, p) => s + Number(p.valor), 0);
-    const { error: e3 } = await sb.from('fiados').update({ valor_total: novoTotal }).eq('id', fiadoId);
-    checarErro(e3, 'Parcela atualizada, mas o total do fiado não pôde ser ajustado.');
+    const { error: e4 } = await sb.from('fiados').update({ valor_total: novoTotal }).eq('id', fiadoId);
+    checarErro(e4, 'Parcela atualizada, mas o total do fiado não pôde ser ajustado.');
   },
   async excluir(id) {
     const { data: fiado } = await sb.from('fiados').select('veiculo_id, status').eq('id', id).single();
@@ -461,5 +506,58 @@ const perfisApi = {
   async atualizarPapel(id, papel) {
     const { error } = await sb.from('perfis').update({ papel }).eq('id', id);
     checarErro(error, 'Erro ao atualizar o papel do usuário.');
+  },
+};
+
+// ---------- FINANCEIRO: CONTAS BANCÁRIAS ----------
+const contasApi = {
+  async listar() {
+    const { data, error } = await sb.from('contas_bancarias').select('*').order('nome_conta');
+    checarErro(error, 'Erro ao carregar contas bancárias.');
+    return data;
+  },
+  async criar(dados) {
+    const { error } = await sb.from('contas_bancarias').insert(dados);
+    checarErro(error, 'Erro ao criar conta.');
+  },
+  async atualizar(id, dados) {
+    const { error } = await sb.from('contas_bancarias').update(dados).eq('id', id);
+    checarErro(error, 'Erro ao atualizar conta.');
+  },
+  async excluir(id) {
+    const { error } = await sb.from('contas_bancarias').delete().eq('id', id);
+    checarErro(error, 'Erro ao excluir conta.');
+  },
+};
+
+// ---------- FINANCEIRO: MOVIMENTAÇÕES ----------
+// Reúne, num só extrato, os pagamentos de fiado recebidos, as vendas e as
+// locações finalizadas — tudo que já é dinheiro entrando.
+const movimentacoesApi = {
+  async listar(dataInicio, dataFim) {
+    const [{ data: pagamentos, error: e1 }, { data: vendas, error: e2 }, { data: locacoes, error: e3 }] = await Promise.all([
+      sb.from('fiado_pagamentos').select('id,valor,data_pagamento,forma_pagamento, fiados(descricao, clientes(nome))').order('data_pagamento', { ascending: false }),
+      sb.from('vendas').select('id,valor,data_venda,forma_pagamento, clientes(nome), veiculos(placa,modelo)').order('data_venda', { ascending: false }),
+      sb.from('locacoes').select('id,valor_total,data_fim_real, clientes(nome), veiculos(placa,modelo)').eq('status', 'finalizada').not('valor_total', 'is', null).order('data_fim_real', { ascending: false }),
+    ]);
+    checarErro(e1 || e2 || e3, 'Erro ao carregar movimentações.');
+
+    let itens = [
+      ...(pagamentos || []).map(p => ({
+        tipo: 'Fiado', descricao: p.fiados?.descricao || '—', cliente_nome: p.fiados?.clientes?.nome,
+        valor: p.valor, data: p.data_pagamento, forma: p.forma_pagamento,
+      })),
+      ...(vendas || []).map(v => ({
+        tipo: 'Venda', descricao: v.veiculos ? `${v.veiculos.placa} — ${v.veiculos.modelo}` : '—', cliente_nome: v.clientes?.nome,
+        valor: v.valor, data: v.data_venda, forma: v.forma_pagamento,
+      })),
+      ...(locacoes || []).map(l => ({
+        tipo: 'Locação', descricao: l.veiculos ? `${l.veiculos.placa} — ${l.veiculos.modelo}` : '—', cliente_nome: l.clientes?.nome,
+        valor: l.valor_total, data: l.data_fim_real, forma: '—',
+      })),
+    ];
+    if (dataInicio) itens = itens.filter(i => i.data && i.data.slice(0, 10) >= dataInicio);
+    if (dataFim) itens = itens.filter(i => i.data && i.data.slice(0, 10) <= dataFim);
+    return itens.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
   },
 };

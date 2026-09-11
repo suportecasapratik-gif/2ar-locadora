@@ -36,6 +36,7 @@ function mostrarView(nome) {
     veiculos: carregarVeiculos,
     clientes: carregarClientes,
     relatorios: carregarRelatorios,
+    financeiro: carregarFinanceiro,
     usuarios: carregarUsuarios,
   };
   carregadores[nome]?.();
