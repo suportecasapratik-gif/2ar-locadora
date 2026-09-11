@@ -189,10 +189,10 @@ async function carregarClientes() {
       </select>
       <button class="btn-secundario" id="btn-exportar-clientes">Exportar CSV</button>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Nome</th><th>Telefone</th><th>CPF</th><th>CNH</th><th>Status</th><th></th></tr></thead><tbody id="tbody-clientes"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Cód.</th><th>Foto</th><th>Nome</th><th>Telefone</th><th>CPF</th><th>CNH</th><th>Motos</th><th>Situação</th><th></th></tr></thead><tbody id="tbody-clientes"></tbody></table></div>
   `;
   document.getElementById('btn-exportar-clientes').onclick = () => exportarCSV('clientes',
-    [{ titulo: 'Nome', campo: 'nome' }, { titulo: 'Telefone', campo: 'telefone' }, { titulo: 'CPF', campo: 'cpf' },
+    [{ titulo: 'Código', campo: 'id' }, { titulo: 'Nome', campo: 'nome' }, { titulo: 'Telefone', campo: 'telefone' }, { titulo: 'CPF', campo: 'cpf' },
      { titulo: 'RG', campo: 'rg' }, { titulo: 'CNH', campo: 'cnh' }, { titulo: 'Profissão', campo: 'profissao' },
      { titulo: 'Status', campo: 'status' }], CACHE_CLIENTES);
   document.getElementById('btn-novo-cliente').onclick = () => formCliente();
@@ -200,25 +200,50 @@ async function carregarClientes() {
   document.getElementById('filtro-status-cliente').addEventListener('change', (e) => renderClientes(document.getElementById('busca-cliente').value, e.target.value));
   await renderClientes();
 }
+function linkWhatsapp(telefone) {
+  const digitos = (telefone || '').replace(/\D/g, '');
+  if (!digitos) return null;
+  const comDDI = digitos.length <= 11 ? '55' + digitos : digitos;
+  return `https://wa.me/${comDDI}`;
+}
 async function renderClientes(busca, status) {
   try {
     let lista = await clientesApi.listar(busca);
     if (status) lista = lista.filter(c => (c.status || 'ativo') === status);
+    if (busca && /^\d+$/.test(busca.trim())) {
+      const todos = await clientesApi.listar();
+      const porCodigo = todos.filter(c => String(c.id) === busca.trim());
+      lista = [...new Map([...lista, ...porCodigo].map(c => [c.id, c])).values()];
+    }
     CACHE_CLIENTES = lista;
+    const situacoes = await clientesApi.situacaoGeral();
     const tbody = document.getElementById('tbody-clientes');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhum cliente cadastrado ainda.</td></tr>`; return; }
-    tbody.innerHTML = lista.map(c => `
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="9" class="vazio">Nenhum cliente encontrado.</td></tr>`; return; }
+    tbody.innerHTML = lista.map(c => {
+      const s = situacoes[c.id] || { fiadosAbertos: 0, fiadosAtrasados: 0, locacoesAtivas: [], motos: new Set() };
+      let situacaoTexto, situacaoTag;
+      if (s.fiadosAtrasados > 0) { situacaoTexto = 'Fiado atrasado'; situacaoTag = 'atrasado'; }
+      else if (s.fiadosAbertos > 0) { situacaoTexto = 'Fiado em aberto'; situacaoTag = 'parcial'; }
+      else if (s.locacoesAtivas.length) { situacaoTexto = 'Locação ativa'; situacaoTag = 'ativa'; }
+      else { situacaoTexto = 'Em dia'; situacaoTag = 'quitado'; }
+      const wa = linkWhatsapp(c.telefone);
+      return `
       <tr>
+        <td class="sub">#${c.id}</td>
         <td>${c.foto_url ? `<img src="${c.foto_url}" alt="${c.nome}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
-        <td>${c.nome}</td><td>${c.telefone || '—'}</td><td>${c.cpf || '—'}</td>
+        <td>${c.nome}</td>
+        <td>${c.telefone || '—'}${wa ? ` <a href="${wa}" target="_blank" rel="noopener" class="btn-secundario" style="text-decoration:none; display:inline-block; padding:3px 8px; font-size:12px">WhatsApp</a>` : ''}</td>
+        <td>${c.cpf || '—'}</td>
         <td>${c.cnh || '—'}${c.cnh && cnhVencida(c.cnh_vencimento) ? ' <span class="tag tag-atrasado">Vencida</span>' : ''}</td>
-        <td><span class="tag tag-${c.status === 'inativo' ? 'cancelada' : 'quitado'}">${rotuloStatusCliente(c.status)}</span></td>
+        <td>${s.motos.size || 0}</td>
+        <td><span class="tag tag-${situacaoTag}">${situacaoTexto}</span></td>
         <td>
           <button class="btn-secundario" onclick="verHistoricoCliente(${c.id}, '${c.nome.replace(/'/g, "\\'")}')">Histórico</button>
           <button class="btn-secundario" onclick="formCliente(${c.id})">Editar</button>
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirCliente(${c.id})">Excluir</button>` : ''}
         </td>
-      </tr>`).join('');
+      </tr>`;
+    }).join('');
   } catch (err) { toast(err.message, true); }
 }
 
@@ -234,13 +259,14 @@ async function excluirCliente(id) {
 async function verHistoricoCliente(id, nome) {
   abrirModal(`<h2>Histórico — ${nome}</h2><p class="sub" id="hist-carregando">Carregando...</p>`);
   try {
+    const c = CACHE_CLIENTES.find(x => x.id === id) || (await clientesApi.obter(id));
     const [fiados, locacoes, vendas] = await Promise.all([fiadoApi.listar(), locacoesApi.listar(), vendasApi.listar()]);
     const fiadosCliente = fiados.filter(f => f.cliente_id === id);
     const locacoesCliente = locacoes.filter(l => l.cliente_id === id);
     const vendasCliente = vendas.filter(v => v.cliente_id === id);
 
     const blocoFiado = fiadosCliente.length
-      ? fiadosCliente.map(f => `<div class="hist-item"><span>${f.descricao} — ${moeda(f.valor_total)}</span><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></div>`).join('')
+      ? fiadosCliente.map(f => `<div class="hist-item"><span>${f.descricao}${f.veiculo_texto ? ' — ' + f.veiculo_texto : ''} — ${moeda(f.valor_total)}${f.tem_parcelas ? ` (${f.parcela_atual}/${f.total_parcelas})` : ''}</span><span style="display:flex;align-items:center;gap:8px"><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span>${f.tem_parcelas ? `<button class="btn-secundario" onclick="verParcelas(${f.id})">Ver parcelas</button>` : ''}</span></div>`).join('')
       : '<p class="sub">Nenhum fiado.</p>';
     const blocoLocacao = locacoesCliente.length
       ? locacoesCliente.map(l => `<div class="hist-item"><span>${l.placa} — ${l.modelo} (${dataBr(l.data_inicio)})</span><span class="tag tag-${l.status}">${rotuloStatusLocacao(l.status)}</span></div>`).join('')
@@ -249,8 +275,10 @@ async function verHistoricoCliente(id, nome) {
       ? vendasCliente.map(v => `<div class="hist-item"><span>${v.placa} — ${v.modelo}</span><span>${moeda(v.valor)}</span></div>`).join('')
       : '<p class="sub">Nenhuma venda.</p>';
 
+    const wa = linkWhatsapp(c?.telefone);
     abrirModal(`
-      <h2>Histórico — ${nome}</h2>
+      <h2>Histórico — ${nome} <span class="sub" style="font-size:14px">#${id}</span></h2>
+      ${wa ? `<a href="${wa}" target="_blank" rel="noopener" class="btn-secundario" style="text-decoration:none; display:inline-block; margin-bottom:12px">Abrir WhatsApp</a>` : ''}
       <p class="grafico-titulo" style="font-size:14px;margin-bottom:8px">Fiado</p>${blocoFiado}
       <p class="grafico-titulo" style="font-size:14px;margin:16px 0 8px">Locação</p>${blocoLocacao}
       <p class="grafico-titulo" style="font-size:14px;margin:16px 0 8px">Venda</p>${blocoVenda}
@@ -667,6 +695,9 @@ async function editarParcela(parcelaId, fiadoId) {
         <label>Valor (R$)<input required id="ep-valor" type="number" step="0.01" value="${p.valor}" /></label>
         <label>Vencimento<input required id="ep-venc" type="date" value="${p.vencimento}" /></label>
       </div>
+      ${p.numero < f.total_parcelas ? `<label style="flex-direction:row; align-items:center; gap:8px">
+        <input type="checkbox" id="ep-cascata" style="width:auto" checked /> Ajustar as próximas parcelas em aberto pela mesma diferença de dias
+      </label>` : ''}
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="verParcelas(${fiadoId})">Cancelar</button>
         <button type="submit" class="btn-primario">Salvar</button>
@@ -678,7 +709,7 @@ async function editarParcela(parcelaId, fiadoId) {
       await fiadoApi.editarParcela(parcelaId, fiadoId, {
         valor: Number(document.getElementById('ep-valor').value),
         vencimento: document.getElementById('ep-venc').value,
-      });
+      }, document.getElementById('ep-cascata')?.checked || false);
       toast('Parcela atualizada.');
       verParcelas(fiadoId);
       renderFiado();
@@ -1177,5 +1208,121 @@ async function alternarPapel(id, papelAtual) {
     await perfisApi.atualizarPapel(id, novoPapel);
     toast('Papel atualizado.');
     renderUsuarios();
+  } catch (err) { toast(err.message, true); }
+}
+
+// ---------- FINANCEIRO ----------
+async function carregarFinanceiro(subaba) {
+  const aba = subaba || 'movimentacoes';
+  const el = document.getElementById('view-financeiro');
+  el.innerHTML = `
+    <div class="view-header"><div><h1>Financeiro</h1><div class="sub">Movimentações e contas bancárias</div></div></div>
+    <div class="toolbar">
+      <button class="btn-secundario ${aba === 'movimentacoes' ? 'ativo' : ''}" id="fin-tab-mov">Movimentações</button>
+      <button class="btn-secundario ${aba === 'contas' ? 'ativo' : ''}" id="fin-tab-contas">Contas bancárias</button>
+    </div>
+    <div id="fin-conteudo"></div>
+  `;
+  document.getElementById('fin-tab-mov').onclick = () => carregarFinanceiro('movimentacoes');
+  document.getElementById('fin-tab-contas').onclick = () => carregarFinanceiro('contas');
+  if (aba === 'movimentacoes') await renderMovimentacoes();
+  else await renderContas();
+}
+
+async function renderMovimentacoes(dataInicio, dataFim) {
+  const conteudo = document.getElementById('fin-conteudo');
+  conteudo.innerHTML = `
+    <div class="toolbar">
+      <input type="date" id="mov-inicio" title="De" value="${dataInicio || ''}" />
+      <input type="date" id="mov-fim" title="Até" value="${dataFim || ''}" />
+      <button class="btn-secundario" id="mov-filtrar">Filtrar</button>
+    </div>
+    <div id="mov-resumo" class="indicadores" style="margin-bottom:16px"></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Tipo</th><th>Cliente</th><th>Descrição</th><th>Forma</th><th>Data</th><th>Valor</th></tr></thead><tbody id="mov-tbody"></tbody></table></div>
+  `;
+  document.getElementById('mov-filtrar').onclick = () => renderMovimentacoes(document.getElementById('mov-inicio').value, document.getElementById('mov-fim').value);
+  try {
+    const itens = await movimentacoesApi.listar(dataInicio, dataFim);
+    const total = itens.reduce((s, i) => s + Number(i.valor || 0), 0);
+    document.getElementById('mov-resumo').innerHTML = `
+      <div class="indicador destaque"><div class="rotulo">Total recebido no período</div><div class="valor">${moeda(total)}</div></div>
+      <div class="indicador"><div class="rotulo">Movimentações</div><div class="valor">${itens.length}</div></div>
+    `;
+    const tbody = document.getElementById('mov-tbody');
+    tbody.innerHTML = itens.length
+      ? itens.map(i => `<tr><td><span class="tag tag-parcial">${i.tipo}</span></td><td>${i.cliente_nome || '—'}</td><td>${i.descricao}</td><td>${i.forma || '—'}</td><td>${dataBr(i.data)}</td><td>${moeda(i.valor)}</td></tr>`).join('')
+      : `<tr><td colspan="6" class="vazio">Nenhuma movimentação no período.</td></tr>`;
+  } catch (err) { toast(err.message, true); }
+}
+
+async function renderContas() {
+  const conteudo = document.getElementById('fin-conteudo');
+  conteudo.innerHTML = `
+    <div class="view-header" style="margin-bottom:16px"><div></div><button class="btn-primario" id="btn-nova-conta">+ Nova conta</button></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Conta</th><th>Responsável</th><th>CPF/CNPJ</th><th>Tipo</th><th>Formas de pagamento</th><th></th></tr></thead><tbody id="contas-tbody"></tbody></table></div>
+  `;
+  document.getElementById('btn-nova-conta').onclick = () => formConta();
+  try {
+    const contas = await contasApi.listar();
+    document.getElementById('contas-tbody').innerHTML = contas.length
+      ? contas.map(c => `
+        <tr>
+          <td>${c.nome_conta}</td><td>${c.responsavel || '—'}</td><td>${c.cpf_cnpj || '—'}</td><td>${c.tipo || '—'}</td><td>${c.formas_pagamento || '—'}</td>
+          <td>
+            <button class="btn-secundario" onclick="formConta(${c.id})">Editar</button>
+            ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirConta(${c.id})">Excluir</button>` : ''}
+          </td>
+        </tr>`).join('')
+      : `<tr><td colspan="6" class="vazio">Nenhuma conta cadastrada ainda.</td></tr>`;
+  } catch (err) { toast(err.message, true); }
+}
+async function formConta(id) {
+  let c = { nome_conta: '', responsavel: '', cpf_cnpj: '', tipo: 'PF', formas_pagamento: '', descricao: '' };
+  if (id) { const contas = await contasApi.listar(); c = contas.find(x => x.id === id) || c; }
+  abrirModal(`
+    <h2>${id ? 'Editar conta' : 'Nova conta bancária'}</h2>
+    <form id="form-conta">
+      <label>Nome da conta<input required id="cb-nome" value="${c.nome_conta}" placeholder="Ex: Nubank PJ, Caixa loja..." /></label>
+      <div class="form-linha">
+        <label>Responsável<input id="cb-responsavel" value="${c.responsavel || ''}" /></label>
+        <label>CPF/CNPJ<input id="cb-cpf" value="${c.cpf_cnpj || ''}" /></label>
+      </div>
+      <div class="form-linha">
+        <label>Tipo
+          <select id="cb-tipo">
+            ${['PF', 'PJ', 'MEI'].map(t => `<option value="${t}" ${t === c.tipo ? 'selected' : ''}>${t}</option>`).join('')}
+          </select>
+        </label>
+        <label>Formas de pagamento<input id="cb-formas" value="${c.formas_pagamento || ''}" placeholder="Pix, dinheiro, cartão..." /></label>
+      </div>
+      <label>Descrição<textarea id="cb-desc" rows="2">${c.descricao || ''}</textarea></label>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
+        <button type="submit" class="btn-primario">Salvar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-conta').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const dados = {
+      nome_conta: document.getElementById('cb-nome').value.trim(),
+      responsavel: document.getElementById('cb-responsavel').value.trim(),
+      cpf_cnpj: document.getElementById('cb-cpf').value.trim(),
+      tipo: document.getElementById('cb-tipo').value,
+      formas_pagamento: document.getElementById('cb-formas').value.trim(),
+      descricao: document.getElementById('cb-desc').value.trim(),
+    };
+    try {
+      if (id) await contasApi.atualizar(id, dados);
+      else await contasApi.criar(dados);
+      fecharModal(); toast('Conta salva.'); renderContas();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+async function excluirConta(id) {
+  if (!confirm('Excluir esta conta bancária?')) return;
+  try {
+    await contasApi.excluir(id);
+    toast('Conta excluída.');
+    renderContas();
   } catch (err) { toast(err.message, true); }
 }
