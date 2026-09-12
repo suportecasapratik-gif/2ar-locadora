@@ -49,8 +49,8 @@ async function carregarOperacional() {
       <h2 class="grafico-titulo">Cobrar / resolver hoje (${fiadosParaHoje.length + locacoesParaHoje.length})</h2>
       ${fiadosParaHoje.length || locacoesParaHoje.length
         ? [
-            ...fiadosParaHoje.map(f => `<div class="hist-item"><span>Fiado — ${f.cliente_nome} (${f.descricao})</span><span class="tag tag-atrasado">${moeda(f.saldo)}</span></div>`),
-            ...locacoesParaHoje.map(l => `<div class="hist-item"><span>Locação — ${l.cliente_nome} (${l.placa} — ${l.modelo})</span><span class="tag tag-atrasado">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`),
+            ...fiadosParaHoje.map(f => `<div class="hist-item"><span>Fiado — ${f.cliente_nome} (${f.descricao}) ${botaoWhats(f.cliente_telefone)}</span><span class="tag tag-atrasado">${moeda(f.saldo)}</span></div>`),
+            ...locacoesParaHoje.map(l => `<div class="hist-item"><span>Locação — ${l.cliente_nome} (${l.placa} — ${l.modelo}) ${botaoWhats(l.cliente_telefone)}</span><span class="tag tag-atrasado">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`),
           ].join('')
         : `<p class="sub">Nada vencido ou vencendo hoje. 🎉</p>`}
     `;
@@ -58,14 +58,14 @@ async function carregarOperacional() {
     document.getElementById('op-fiados').innerHTML = `
       <h2 class="grafico-titulo">Fiados em aberto (${fiadosAbertos.length})</h2>
       ${fiadosAbertos.length
-        ? fiadosAbertos.map(f => `<div class="hist-item"><span>${f.cliente_nome} — ${f.descricao}${f.tem_parcelas ? ` (parcela ${f.parcela_atual}/${f.total_parcelas})` : ''}</span><span class="tag tag-${f.status}">${moeda(f.saldo)} · ${dataBr(f.vencimento)}</span></div>`).join('')
+        ? fiadosAbertos.map(f => `<div class="hist-item"><span>${f.cliente_nome} — ${f.descricao}${f.tem_parcelas ? ` (parcela ${f.parcela_atual}/${f.total_parcelas})` : ''} ${botaoWhats(f.cliente_telefone)}</span><span class="tag tag-${f.status}">${moeda(f.saldo)} · ${dataBr(f.vencimento)}</span></div>`).join('')
         : `<p class="sub">Nenhum fiado em aberto.</p>`}
     `;
 
     document.getElementById('op-locacoes').innerHTML = `
       <h2 class="grafico-titulo">Locações ativas (${locacoesAtivas.length})</h2>
       ${locacoesAtivas.length
-        ? locacoesAtivas.map(l => `<div class="hist-item"><span>${l.cliente_nome} — ${l.placa} (${l.modelo})</span><span class="tag ${l.data_fim_prevista && l.data_fim_prevista < hoje ? 'tag-atrasado' : 'tag-ativa'}">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`).join('')
+        ? locacoesAtivas.map(l => `<div class="hist-item"><span>${l.cliente_nome} — ${l.placa} (${l.modelo}) ${botaoWhats(l.cliente_telefone)}</span><span class="tag ${l.data_fim_prevista && l.data_fim_prevista < hoje ? 'tag-atrasado' : 'tag-ativa'}">Devolver ${dataBr(l.data_fim_prevista)}</span></div>`).join('')
         : `<p class="sub">Nenhuma locação ativa no momento.</p>`}
     `;
   } catch (err) { toast(err.message, true); }
@@ -205,6 +205,10 @@ function linkWhatsapp(telefone) {
   if (!digitos) return null;
   const comDDI = digitos.length <= 11 ? '55' + digitos : digitos;
   return `https://wa.me/${comDDI}`;
+}
+function botaoWhats(telefone) {
+  const link = linkWhatsapp(telefone);
+  return link ? `<a href="${link}" target="_blank" rel="noopener" class="btn-secundario" style="text-decoration:none">WhatsApp</a>` : '';
 }
 async function renderClientes(busca, status) {
   try {
@@ -622,7 +626,7 @@ async function carregarFiado() {
         <option value="atrasado">Atrasado</option>
       </select>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Veículo</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th>Último pgto.</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Cliente</th><th>Veículo</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th>Último pgto.</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
@@ -640,10 +644,12 @@ async function renderFiado(status, busca) {
       lista = lista.filter(f => f.cliente_nome?.toLowerCase().includes(termo) || f.descricao?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-fiado');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="10" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="11" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
     tbody.innerHTML = lista.map(f => `
       <tr>
-        <td>${f.cliente_nome}</td><td>${f.veiculo_texto || '—'}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
+        <td>${f.cliente_foto ? `<img src="${f.cliente_foto}" alt="${f.cliente_nome}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
+        <td>${f.cliente_nome}${linkWhatsapp(f.cliente_telefone) ? ` <a href="${linkWhatsapp(f.cliente_telefone)}" target="_blank" rel="noopener" class="btn-secundario" style="text-decoration:none">WhatsApp</a>` : ''}</td>
+        <td>${f.veiculo_texto || '—'}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
         <td>${f.tem_parcelas ? `${f.parcela_atual}/${f.total_parcelas}` : '—'}</td>
         <td>${dataBr(f.vencimento)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td>
         <td>${f.ultimo_pagamento ? dataBr(f.ultimo_pagamento) : '—'}</td>
@@ -672,12 +678,13 @@ async function verParcelas(fiadoId) {
             <span>Parcela ${p.numero}/${f.total_parcelas} — vence ${dataBr(p.vencimento)}${p.status === 'pendente' && p.vencimento < hoje ? ' <span class="tag tag-atrasado">Atrasada</span>' : ''}
               ${p.status === 'pendente' && Number(p.valor_pago) > 0 ? `<br><span class="sub">Pago parcial: ${moeda(p.valor_pago)} de ${moeda(p.valor)} — último em ${dataBr(p.ultimo_pagamento_em)}</span>` : ''}
             </span>
-            <span style="display:flex; align-items:center; gap:8px">
+            <span style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
               ${moeda(p.valor)}
               ${p.status === 'pago'
-                ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span>`
+                ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span><button class="btn-secundario" onclick="formCorrigirValorPago(${p.id}, ${fiadoId})">Corrigir valor pago</button>`
                 : `<button class="btn-secundario" onclick="editarParcela(${p.id}, ${fiadoId})">Editar</button>
-                   <button class="btn-secundario" onclick="formPagarParcela(${p.id}, ${fiadoId})">Receber</button>`}
+                   <button class="btn-secundario" onclick="formPagarParcela(${p.id}, ${fiadoId})">Receber</button>
+                   ${Number(p.valor_pago) > 0 ? `<button class="btn-secundario" onclick="formCorrigirValorPago(${p.id}, ${fiadoId})">Corrigir valor pago</button>` : ''}`}
             </span>
           </div>`).join('')}
       </div>
@@ -725,6 +732,32 @@ async function formPagarParcela(parcelaId, fiadoId) {
         document.getElementById('pp-data').value,
       );
       toast('Pagamento registrado.');
+      verParcelas(fiadoId);
+      renderFiado();
+    } catch (err) { toast(err.message, true); }
+  });
+}
+async function formCorrigirValorPago(parcelaId, fiadoId) {
+  const lista = await fiadoApi.listar();
+  const f = lista.find(x => x.id === fiadoId);
+  const p = f?.parcelas.find(x => x.id === parcelaId);
+  if (!p) return;
+  abrirModal(`
+    <h2>Corrigir valor pago — parcela ${p.numero}/${f.total_parcelas}</h2>
+    <p class="sub" style="margin-bottom:12px">${f.cliente_nome} — valor da parcela: ${moeda(p.valor)}</p>
+    <form id="form-corrigir-pago">
+      <label>Valor total já pago nessa parcela (R$)<input required id="cv-valor" type="number" step="0.01" value="${p.valor_pago || 0}" /></label>
+      <p class="sub" style="margin:-6px 0 0">Isso substitui o valor pago registrado — use pra corrigir um valor digitado errado.</p>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="verParcelas(${fiadoId})">Cancelar</button>
+        <button type="submit" class="btn-primario">Salvar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-corrigir-pago').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await fiadoApi.corrigirValorPago(parcelaId, fiadoId, Number(document.getElementById('cv-valor').value));
+      toast('Valor corrigido.');
       verParcelas(fiadoId);
       renderFiado();
     } catch (err) { toast(err.message, true); }
@@ -1072,8 +1105,13 @@ async function finalizarLocacao(id, veiculoId) {
     <h2>Finalizar locação</h2>
     <form id="form-finalizar">
       <label>Data de devolução<input required id="fl-data" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
-      <label>Valor total cobrado (R$)<input id="fl-valor" type="number" step="0.01" /></label>
-      <label>Conta bancária<select id="fl-conta">${await opcoesContasHtml()}</select></label>
+      <div class="form-linha">
+        <label>Valor total cobrado (R$)<input id="fl-valor" type="number" step="0.01" /></label>
+        <label>Forma de pagamento
+          <select id="fl-forma"><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Transferência</option></select>
+        </label>
+      </div>
+      <label>Conta bancária (MEI/PJ/PF)<select id="fl-conta">${await opcoesContasHtml()}</select></label>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Finalizar</button>
@@ -1084,8 +1122,9 @@ async function finalizarLocacao(id, veiculoId) {
     const dataFim = document.getElementById('fl-data').value;
     const valor = Number(document.getElementById('fl-valor').value) || null;
     const conta = document.getElementById('fl-conta').value || null;
+    const forma = document.getElementById('fl-forma').value;
     try {
-      await locacoesApi.finalizar(id, veiculoId, dataFim, valor, conta);
+      await locacoesApi.finalizar(id, veiculoId, dataFim, valor, conta, forma);
       fecharModal(); toast('Locação finalizada.'); renderLocacoes();
     } catch (err) { toast(err.message, true); }
   });
