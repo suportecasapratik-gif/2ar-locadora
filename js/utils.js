@@ -32,3 +32,20 @@ function abrirModal(html) {
 function fecharModal() {
   modalFundo().classList.add('oculto');
 }
+
+// Exporta uma lista de objetos para CSV e dispara o download.
+// colunas: [{ titulo: 'Nome', campo: 'nome' }, ...]
+function exportarCSV(nomeArquivo, colunas, linhas) {
+  if (!linhas.length) { toast('Nada para exportar.', true); return; }
+  const cabecalho = colunas.map(c => c.titulo).join(';');
+  const corpo = linhas.map(linha =>
+    colunas.map(c => `"${String(linha[c.campo] ?? '').replace(/"/g, '""')}"`).join(';')
+  ).join('\n');
+  const csv = '\uFEFF' + cabecalho + '\n' + corpo;
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `${nomeArquivo}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
