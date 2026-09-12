@@ -622,7 +622,7 @@ async function carregarFiado() {
         <option value="atrasado">Atrasado</option>
       </select>
     </div>
-    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Veículo</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Cliente</th><th>Veículo</th><th>Descrição</th><th>Total</th><th>Saldo</th><th>Parcela</th><th>Vencimento</th><th>Status</th><th>Último pgto.</th><th></th></tr></thead><tbody id="tbody-fiado"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
@@ -640,12 +640,13 @@ async function renderFiado(status, busca) {
       lista = lista.filter(f => f.cliente_nome?.toLowerCase().includes(termo) || f.descricao?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-fiado');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="9" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="10" class="vazio">Nenhum fiado encontrado.</td></tr>`; return; }
     tbody.innerHTML = lista.map(f => `
       <tr>
         <td>${f.cliente_nome}</td><td>${f.veiculo_texto || '—'}</td><td>${f.descricao}</td><td>${moeda(f.valor_total)}</td><td>${moeda(f.saldo)}</td>
         <td>${f.tem_parcelas ? `${f.parcela_atual}/${f.total_parcelas}` : '—'}</td>
         <td>${dataBr(f.vencimento)}</td><td><span class="tag tag-${f.status}">${rotuloStatusFiado(f.status)}</span></td>
+        <td>${f.ultimo_pagamento ? dataBr(f.ultimo_pagamento) : '—'}</td>
         <td>
           ${f.tem_parcelas
             ? (f.saldo > 0 ? `<button class="btn-secundario" onclick="verParcelas(${f.id})">Ver parcelas</button>` : '')
@@ -668,19 +669,66 @@ async function verParcelas(fiadoId) {
       <div class="tabela-wrap" style="border:none">
         ${f.parcelas.map(p => `
           <div class="hist-item">
-            <span>Parcela ${p.numero}/${f.total_parcelas} — vence ${dataBr(p.vencimento)}${p.status === 'pendente' && p.vencimento < hoje ? ' <span class="tag tag-atrasado">Atrasada</span>' : ''}</span>
+            <span>Parcela ${p.numero}/${f.total_parcelas} — vence ${dataBr(p.vencimento)}${p.status === 'pendente' && p.vencimento < hoje ? ' <span class="tag tag-atrasado">Atrasada</span>' : ''}
+              ${p.status === 'pendente' && Number(p.valor_pago) > 0 ? `<br><span class="sub">Pago parcial: ${moeda(p.valor_pago)} de ${moeda(p.valor)} — último em ${dataBr(p.ultimo_pagamento_em)}</span>` : ''}
+            </span>
             <span style="display:flex; align-items:center; gap:8px">
               ${moeda(p.valor)}
               ${p.status === 'pago'
                 ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span>`
                 : `<button class="btn-secundario" onclick="editarParcela(${p.id}, ${fiadoId})">Editar</button>
-                   <button class="btn-secundario" onclick="pagarParcela(${p.id}, ${fiadoId})">Marcar paga</button>`}
+                   <button class="btn-secundario" onclick="formPagarParcela(${p.id}, ${fiadoId})">Receber</button>`}
             </span>
           </div>`).join('')}
       </div>
       <div class="modal-acoes"><button type="button" class="btn-secundario" onclick="fecharModal()">Fechar</button></div>
     `);
   } catch (err) { toast(err.message, true); }
+}
+async function opcoesContasHtml(selecionadaId) {
+  const contas = await contasApi.listar();
+  const opcoes = contas.map(c => `<option value="${c.id}" ${c.id == selecionadaId ? 'selected' : ''}>${c.nome_conta}${c.tipo ? ' (' + c.tipo + ')' : ''}</option>`).join('');
+  return `<option value="">Não informado</option>${opcoes}`;
+}
+async function formPagarParcela(parcelaId, fiadoId) {
+  const lista = await fiadoApi.listar();
+  const f = lista.find(x => x.id === fiadoId);
+  const p = f?.parcelas.find(x => x.id === parcelaId);
+  if (!p) return;
+  const restante = Number(p.valor) - Number(p.valor_pago || 0);
+  abrirModal(`
+    <h2>Receber parcela ${p.numero}/${f.total_parcelas}</h2>
+    <p class="sub" style="margin-bottom:12px">${f.cliente_nome} — falta ${moeda(restante)}</p>
+    <form id="form-pagar-parcela">
+      <label>Valor recebido agora (R$)<input required id="pp-valor" type="number" step="0.01" max="${restante}" value="${restante}" /></label>
+      <p class="sub" style="margin:-6px 0 0">Pode pagar menos que o restante — o valor sobrando fica registrado como parcial.</p>
+      <div class="form-linha">
+        <label>Forma de pagamento
+          <select id="pp-forma"><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Transferência</option></select>
+        </label>
+        <label>Data do pagamento<input required id="pp-data" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+      </div>
+      <label>Conta bancária (MEI/PJ/PF)<select id="pp-conta">${await opcoesContasHtml()}</select></label>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="verParcelas(${fiadoId})">Cancelar</button>
+        <button type="submit" class="btn-primario">Confirmar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-pagar-parcela').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await fiadoApi.pagarParcela(
+        parcelaId, fiadoId,
+        Number(document.getElementById('pp-valor').value),
+        document.getElementById('pp-forma').value,
+        document.getElementById('pp-conta').value || null,
+        document.getElementById('pp-data').value,
+      );
+      toast('Pagamento registrado.');
+      verParcelas(fiadoId);
+      renderFiado();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 async function editarParcela(parcelaId, fiadoId) {
   const lista = await fiadoApi.listar();
@@ -856,9 +904,13 @@ async function formPagamento(fiadoId, saldo) {
     <p class="sub">Saldo devedor atual: <strong>${moeda(saldo)}</strong></p>
     <form id="form-pagamento">
       <label>Valor recebido (R$)<input required id="p-valor" type="number" step="0.01" max="${saldo}" /></label>
-      <label>Forma de pagamento
-        <select id="p-forma"><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Transferência</option></select>
-      </label>
+      <div class="form-linha">
+        <label>Forma de pagamento
+          <select id="p-forma"><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Transferência</option></select>
+        </label>
+        <label>Data do pagamento<input required id="p-data" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+      </div>
+      <label>Conta bancária (MEI/PJ/PF)<select id="p-conta">${await opcoesContasHtml()}</select></label>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Confirmar</button>
@@ -868,8 +920,10 @@ async function formPagamento(fiadoId, saldo) {
     e.preventDefault();
     const valor = Number(document.getElementById('p-valor').value);
     const forma = document.getElementById('p-forma').value;
+    const conta = document.getElementById('p-conta').value || null;
+    const data = document.getElementById('p-data').value;
     try {
-      await fiadoApi.registrarPagamento(fiadoId, valor, forma);
+      await fiadoApi.registrarPagamento(fiadoId, valor, forma, conta, data);
       fecharModal(); toast('Pagamento registrado.'); renderFiado();
     } catch (err) { toast(err.message, true); }
   });
@@ -1019,6 +1073,7 @@ async function finalizarLocacao(id, veiculoId) {
     <form id="form-finalizar">
       <label>Data de devolução<input required id="fl-data" type="date" value="${new Date().toISOString().slice(0,10)}" /></label>
       <label>Valor total cobrado (R$)<input id="fl-valor" type="number" step="0.01" /></label>
+      <label>Conta bancária<select id="fl-conta">${await opcoesContasHtml()}</select></label>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Finalizar</button>
@@ -1028,8 +1083,9 @@ async function finalizarLocacao(id, veiculoId) {
     e.preventDefault();
     const dataFim = document.getElementById('fl-data').value;
     const valor = Number(document.getElementById('fl-valor').value) || null;
+    const conta = document.getElementById('fl-conta').value || null;
     try {
-      await locacoesApi.finalizar(id, veiculoId, dataFim, valor);
+      await locacoesApi.finalizar(id, veiculoId, dataFim, valor, conta);
       fecharModal(); toast('Locação finalizada.'); renderLocacoes();
     } catch (err) { toast(err.message, true); }
   });
@@ -1136,6 +1192,7 @@ async function formVenda() {
           <select id="vd-forma"><option>À vista</option><option>Financiado</option><option>Pix</option><option>Cartão</option></select>
         </label>
       </div>
+      <label>Conta bancária<select id="vd-conta">${await opcoesContasHtml()}</select></label>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Registrar</button>
@@ -1155,6 +1212,7 @@ async function formVenda() {
       cliente_id: Number(document.getElementById('vd-cliente').value),
       valor: Number(document.getElementById('vd-valor').value),
       forma_pagamento: document.getElementById('vd-forma').value,
+      conta_bancaria_id: Number(document.getElementById('vd-conta').value) || null,
       criado_por: PERFIL.id,
     };
     try {
@@ -1229,29 +1287,49 @@ async function carregarFinanceiro(subaba) {
   else await renderContas();
 }
 
-async function renderMovimentacoes(dataInicio, dataFim) {
+async function renderMovimentacoes(dataInicio, dataFim, contaId) {
   const conteudo = document.getElementById('fin-conteudo');
   conteudo.innerHTML = `
     <div class="toolbar">
       <input type="date" id="mov-inicio" title="De" value="${dataInicio || ''}" />
       <input type="date" id="mov-fim" title="Até" value="${dataFim || ''}" />
+      <select id="mov-conta"><option value="">Todas as contas</option>${(await contasApi.listar()).map(c => `<option value="${c.id}" ${c.id == contaId ? 'selected' : ''}>${c.nome_conta}</option>`).join('')}</select>
       <button class="btn-secundario" id="mov-filtrar">Filtrar</button>
     </div>
     <div id="mov-resumo" class="indicadores" style="margin-bottom:16px"></div>
-    <div class="tabela-wrap"><table><thead><tr><th>Tipo</th><th>Cliente</th><th>Descrição</th><th>Forma</th><th>Data</th><th>Valor</th></tr></thead><tbody id="mov-tbody"></tbody></table></div>
+    <div class="form-linha" style="margin-bottom:16px">
+      <div class="painel-grafico" id="mov-por-conta"></div>
+      <div class="painel-grafico" id="mov-por-forma"></div>
+    </div>
+    <div class="tabela-wrap"><table><thead><tr><th>Tipo</th><th>Cliente</th><th>Descrição</th><th>Forma</th><th>Conta</th><th>Data</th><th>Valor</th></tr></thead><tbody id="mov-tbody"></tbody></table></div>
   `;
-  document.getElementById('mov-filtrar').onclick = () => renderMovimentacoes(document.getElementById('mov-inicio').value, document.getElementById('mov-fim').value);
+  document.getElementById('mov-filtrar').onclick = () => renderMovimentacoes(document.getElementById('mov-inicio').value, document.getElementById('mov-fim').value, document.getElementById('mov-conta').value);
   try {
-    const itens = await movimentacoesApi.listar(dataInicio, dataFim);
+    const itens = await movimentacoesApi.listar(dataInicio, dataFim, contaId);
     const total = itens.reduce((s, i) => s + Number(i.valor || 0), 0);
     document.getElementById('mov-resumo').innerHTML = `
       <div class="indicador destaque"><div class="rotulo">Total recebido no período</div><div class="valor">${moeda(total)}</div></div>
       <div class="indicador"><div class="rotulo">Movimentações</div><div class="valor">${itens.length}</div></div>
     `;
+
+    const somarPor = (chaveFn) => {
+      const mapa = {};
+      itens.forEach(i => { const k = chaveFn(i) || 'Não informado'; mapa[k] = (mapa[k] || 0) + Number(i.valor || 0); });
+      return Object.entries(mapa).sort((a, b) => b[1] - a[1]);
+    };
+    const porConta = somarPor(i => i.conta_nome);
+    const porForma = somarPor(i => i.forma);
+    document.getElementById('mov-por-conta').innerHTML = `<h2 class="grafico-titulo">Total por conta (MEI/PJ/PF)</h2>` + (
+      porConta.length ? porConta.map(([nome, valor]) => `<div class="hist-item"><span>${nome}</span><span>${moeda(valor)}</span></div>`).join('') : `<p class="sub">Sem dados no período.</p>`
+    );
+    document.getElementById('mov-por-forma').innerHTML = `<h2 class="grafico-titulo">Total por forma de pagamento</h2>` + (
+      porForma.length ? porForma.map(([nome, valor]) => `<div class="hist-item"><span>${nome}</span><span>${moeda(valor)}</span></div>`).join('') : `<p class="sub">Sem dados no período.</p>`
+    );
+
     const tbody = document.getElementById('mov-tbody');
     tbody.innerHTML = itens.length
-      ? itens.map(i => `<tr><td><span class="tag tag-parcial">${i.tipo}</span></td><td>${i.cliente_nome || '—'}</td><td>${i.descricao}</td><td>${i.forma || '—'}</td><td>${dataBr(i.data)}</td><td>${moeda(i.valor)}</td></tr>`).join('')
-      : `<tr><td colspan="6" class="vazio">Nenhuma movimentação no período.</td></tr>`;
+      ? itens.map(i => `<tr><td><span class="tag tag-parcial">${i.tipo}</span></td><td>${i.cliente_nome || '—'}</td><td>${i.descricao}</td><td>${i.forma || '—'}</td><td>${i.conta_nome || '—'}</td><td>${dataBr(i.data)}</td><td>${moeda(i.valor)}</td></tr>`).join('')
+      : `<tr><td colspan="7" class="vazio">Nenhuma movimentação no período.</td></tr>`;
   } catch (err) { toast(err.message, true); }
 }
 

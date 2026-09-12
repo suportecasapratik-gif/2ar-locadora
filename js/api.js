@@ -103,7 +103,7 @@ const dashboardApi = {
 
     const { data: fiadosSimples, error: e2 } = await sb
       .from('fiados')
-      .select('*, clientes(nome), fiado_pagamentos(valor), fiado_parcelas(id)')
+      .select('*, clientes(nome), fiado_pagamentos(valor,data_pagamento), fiado_parcelas(id)')
       .neq('status', 'quitado')
       .gte('vencimento', hoje)
       .lte('vencimento', em7dias);
@@ -169,7 +169,7 @@ const clientesApi = {
   },
   async historico(id) {
     const [{ data: fiados, error: e1 }, { data: locacoes, error: e2 }, { data: vendas, error: e3 }] = await Promise.all([
-      sb.from('fiados').select('*, veiculos(placa,modelo), fiado_pagamentos(valor), fiado_parcelas(*)').eq('cliente_id', id).order('data_venda', { ascending: false }),
+      sb.from('fiados').select('*, veiculos(placa,modelo), fiado_pagamentos(valor,data_pagamento), fiado_parcelas(*)').eq('cliente_id', id).order('data_venda', { ascending: false }),
       sb.from('locacoes').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_inicio', { ascending: false }),
       sb.from('vendas').select('*, veiculos(placa,modelo)').eq('cliente_id', id).order('data_venda', { ascending: false }),
     ]);
@@ -193,7 +193,7 @@ const clientesApi = {
   // (não é um campo manual): fiado em aberto/atrasado, locação ativa, motos no nome.
   async situacaoGeral() {
     const [{ data: fiados }, { data: locacoes }, { data: vendas }] = await Promise.all([
-      sb.from('fiados').select('cliente_id, veiculo_id, valor_total, status, fiado_pagamentos(valor)'),
+      sb.from('fiados').select('cliente_id, veiculo_id, valor_total, status, fiado_pagamentos(valor,data_pagamento)'),
       sb.from('locacoes').select('cliente_id, veiculo_id, status, veiculos(placa,modelo)').eq('status', 'ativa'),
       sb.from('vendas').select('cliente_id, veiculo_id'),
     ]);
@@ -258,7 +258,7 @@ const fiadoApi = {
   async listar(status) {
     let query = sb
       .from('fiados')
-      .select('*, clientes(nome), veiculos(placa,modelo), fiado_pagamentos(valor), fiado_parcelas(*)')
+      .select('*, clientes(nome), veiculos(placa,modelo), fiado_pagamentos(valor,data_pagamento), fiado_parcelas(*)')
       .order('data_venda', { ascending: false });
     const { data, error } = await query;
     checarErro(error, 'Erro ao carregar fiados.');
@@ -302,35 +302,54 @@ const fiadoApi = {
     const { error } = await sb.from('fiados').update(dados).eq('id', id);
     checarErro(error, 'Erro ao atualizar fiado.');
   },
-  async registrarPagamento(fiadoId, valor, formaPagamento) {
+  async registrarPagamento(fiadoId, valor, formaPagamento, contaId, dataPagamento) {
     const { error: e1 } = await sb
       .from('fiado_pagamentos')
-      .insert({ fiado_id: fiadoId, valor, forma_pagamento: formaPagamento });
+      .insert({
+        fiado_id: fiadoId, valor, forma_pagamento: formaPagamento, conta_bancaria_id: contaId || null,
+        data_pagamento: dataPagamento ? dataPagamento + 'T12:00:00' : undefined,
+      });
     checarErro(e1, 'Erro ao registrar pagamento.');
     const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
     checarErro(e2, 'Pagamento salvo, mas o status não pôde ser recalculado.');
     await liberarVeiculoSeQuitado(fiadoId);
   },
-  // Marca uma parcela específica como paga e recalcula o status do fiado.
-  async pagarParcela(parcelaId, fiadoId) {
+  // Registra um pagamento (total ou PARCIAL) numa parcela específica.
+  // Se o valor pago acumulado ainda não cobrir o valor da parcela, ela
+  // continua pendente, só que com o valor_pago já abatido.
+  async pagarParcela(parcelaId, fiadoId, valorPago, formaPagamento, contaId, dataPagamento) {
+    const { data: parcela, error: e0 } = await sb.from('fiado_parcelas').select('valor, valor_pago').eq('id', parcelaId).single();
+    checarErro(e0, 'Erro ao localizar a parcela.');
+    const hoje = new Date().toISOString().slice(0, 10);
+    const dataEfetiva = dataPagamento || hoje;
+    const novoValorPago = Number(parcela.valor_pago || 0) + Number(valorPago);
+    const quitada = novoValorPago >= Number(parcela.valor) - 0.005;
+
     const { error: e1 } = await sb
       .from('fiado_parcelas')
-      .update({ status: 'pago', pago_em: new Date().toISOString().slice(0, 10) })
+      .update({
+        valor_pago: novoValorPago,
+        status: quitada ? 'pago' : 'pendente',
+        pago_em: quitada ? dataEfetiva : null,
+        ultimo_pagamento_em: dataEfetiva,
+        forma_pagamento: formaPagamento || null,
+        conta_bancaria_id: contaId || null,
+      })
       .eq('id', parcelaId);
     checarErro(e1, 'Erro ao registrar pagamento da parcela.');
 
     const { data: parcelas, error: e2 } = await sb.from('fiado_parcelas').select('*').eq('fiado_id', fiadoId);
-    checarErro(e2, 'Parcela paga, mas não foi possível atualizar o status geral.');
-    const hoje = new Date().toISOString().slice(0, 10);
+    checarErro(e2, 'Pagamento salvo, mas não foi possível atualizar o status geral.');
     const pendentes = parcelas.filter(p => p.status === 'pendente');
+    const pagas = parcelas.filter(p => p.status === 'pago');
     let novoStatus;
     if (!pendentes.length) novoStatus = 'quitado';
     else if (pendentes.some(p => p.vencimento < hoje)) novoStatus = 'atrasado';
-    else if (pendentes.length < parcelas.length) novoStatus = 'parcial';
+    else if (pagas.length || pendentes.some(p => Number(p.valor_pago) > 0)) novoStatus = 'parcial';
     else novoStatus = 'aberto';
     const proxima = pendentes.sort((a, b) => a.vencimento.localeCompare(b.vencimento))[0];
     const { error: e3 } = await sb.from('fiados').update({ status: novoStatus, vencimento: proxima?.vencimento || null }).eq('id', fiadoId);
-    checarErro(e3, 'Parcela paga, mas o status do fiado não pôde ser atualizado.');
+    checarErro(e3, 'Pagamento salvo, mas o status do fiado não pôde ser atualizado.');
     if (novoStatus === 'quitado') await liberarVeiculoSeQuitado(fiadoId);
   },
   // Muda o valor e/ou a data de uma parcela específica (ex: mover a entrada pro
@@ -396,23 +415,25 @@ function enriquecerFiado(f) {
     const parcelas = [...f.fiado_parcelas].sort((a, b) => a.numero - b.numero);
     const pagas = parcelas.filter(p => p.status === 'pago');
     const pendentes = parcelas.filter(p => p.status === 'pendente');
-    const saldo = pendentes.reduce((s, p) => s + Number(p.valor), 0);
+    const saldo = pendentes.reduce((s, p) => s + (Number(p.valor) - Number(p.valor_pago || 0)), 0);
     const hoje = new Date().toISOString().slice(0, 10);
     let status;
     if (!pendentes.length) status = 'quitado';
     else if (pendentes.some(p => p.vencimento < hoje)) status = 'atrasado';
-    else if (pagas.length) status = 'parcial';
+    else if (pagas.length || pendentes.some(p => Number(p.valor_pago) > 0)) status = 'parcial';
     else status = 'aberto';
     const proxima = pendentes[0];
+    const ultimoPagamento = parcelas.map(p => p.ultimo_pagamento_em).filter(Boolean).sort().pop();
     return {
       ...f, cliente_nome: nome, veiculo_texto: veiculoTexto, valor_pago: f.valor_total - saldo, saldo, status,
-      parcelas, tem_parcelas: true,
+      parcelas, tem_parcelas: true, ultimo_pagamento: ultimoPagamento,
       parcela_atual: pagas.length + (pendentes.length ? 1 : 0), total_parcelas: parcelas.length,
       vencimento: proxima?.vencimento || f.vencimento,
     };
   }
   const pago = (f.fiado_pagamentos || []).reduce((s, p) => s + Number(p.valor), 0);
-  return { ...f, cliente_nome: nome, veiculo_texto: veiculoTexto, valor_pago: pago, saldo: f.valor_total - pago, tem_parcelas: false };
+  const ultimoPagamento = (f.fiado_pagamentos || []).map(p => p.data_pagamento).filter(Boolean).sort().pop();
+  return { ...f, cliente_nome: nome, veiculo_texto: veiculoTexto, valor_pago: pago, saldo: f.valor_total - pago, tem_parcelas: false, ultimo_pagamento: ultimoPagamento };
 }
 
 // ---------- LOCAÇÕES ----------
@@ -438,10 +459,10 @@ const locacoesApi = {
     checarErro(eU, 'Locação criada, mas o status do veículo não pôde ser atualizado.');
     return data;
   },
-  async finalizar(id, veiculoId, dataFimReal, valorTotal) {
+  async finalizar(id, veiculoId, dataFimReal, valorTotal, contaId) {
     const { error: e1 } = await sb
       .from('locacoes')
-      .update({ status: 'finalizada', data_fim_real: dataFimReal, valor_total: valorTotal })
+      .update({ status: 'finalizada', data_fim_real: dataFimReal, valor_total: valorTotal, conta_bancaria_id: contaId || null })
       .eq('id', id);
     checarErro(e1, 'Erro ao finalizar locação.');
     const { error: e2 } = await sb.from('veiculos').update({ status: 'disponivel' }).eq('id', veiculoId);
@@ -534,30 +555,40 @@ const contasApi = {
 // Reúne, num só extrato, os pagamentos de fiado recebidos, as vendas e as
 // locações finalizadas — tudo que já é dinheiro entrando.
 const movimentacoesApi = {
-  async listar(dataInicio, dataFim) {
-    const [{ data: pagamentos, error: e1 }, { data: vendas, error: e2 }, { data: locacoes, error: e3 }] = await Promise.all([
-      sb.from('fiado_pagamentos').select('id,valor,data_pagamento,forma_pagamento, fiados(descricao, clientes(nome))').order('data_pagamento', { ascending: false }),
-      sb.from('vendas').select('id,valor,data_venda,forma_pagamento, clientes(nome), veiculos(placa,modelo)').order('data_venda', { ascending: false }),
-      sb.from('locacoes').select('id,valor_total,data_fim_real, clientes(nome), veiculos(placa,modelo)').eq('status', 'finalizada').not('valor_total', 'is', null).order('data_fim_real', { ascending: false }),
+  async listar(dataInicio, dataFim, contaId) {
+    const [{ data: pagamentos, error: e1 }, { data: parcelas, error: e2 }, { data: vendas, error: e3 }, { data: locacoes, error: e4 }] = await Promise.all([
+      sb.from('fiado_pagamentos').select('id,valor,data_pagamento,forma_pagamento,conta_bancaria_id, fiados(descricao, clientes(nome)), contas_bancarias(nome_conta)').order('data_pagamento', { ascending: false }),
+      sb.from('fiado_parcelas').select('id,valor_pago,ultimo_pagamento_em,forma_pagamento,conta_bancaria_id,numero, fiados(descricao, clientes(nome)), contas_bancarias(nome_conta)').gt('valor_pago', 0).order('ultimo_pagamento_em', { ascending: false }),
+      sb.from('vendas').select('id,valor,data_venda,forma_pagamento,conta_bancaria_id, clientes(nome), veiculos(placa,modelo), contas_bancarias(nome_conta)').order('data_venda', { ascending: false }),
+      sb.from('locacoes').select('id,valor_total,data_fim_real,conta_bancaria_id, clientes(nome), veiculos(placa,modelo), contas_bancarias(nome_conta)').eq('status', 'finalizada').not('valor_total', 'is', null).order('data_fim_real', { ascending: false }),
     ]);
-    checarErro(e1 || e2 || e3, 'Erro ao carregar movimentações.');
+    checarErro(e1 || e2 || e3 || e4, 'Erro ao carregar movimentações.');
 
     let itens = [
       ...(pagamentos || []).map(p => ({
         tipo: 'Fiado', descricao: p.fiados?.descricao || '—', cliente_nome: p.fiados?.clientes?.nome,
         valor: p.valor, data: p.data_pagamento, forma: p.forma_pagamento,
+        conta_id: p.conta_bancaria_id, conta_nome: p.contas_bancarias?.nome_conta,
+      })),
+      ...(parcelas || []).map(p => ({
+        tipo: 'Fiado (parcela)', descricao: `${p.fiados?.descricao || '—'} (parcela ${p.numero})`, cliente_nome: p.fiados?.clientes?.nome,
+        valor: p.valor_pago, data: p.ultimo_pagamento_em, forma: p.forma_pagamento,
+        conta_id: p.conta_bancaria_id, conta_nome: p.contas_bancarias?.nome_conta,
       })),
       ...(vendas || []).map(v => ({
         tipo: 'Venda', descricao: v.veiculos ? `${v.veiculos.placa} — ${v.veiculos.modelo}` : '—', cliente_nome: v.clientes?.nome,
         valor: v.valor, data: v.data_venda, forma: v.forma_pagamento,
+        conta_id: v.conta_bancaria_id, conta_nome: v.contas_bancarias?.nome_conta,
       })),
       ...(locacoes || []).map(l => ({
         tipo: 'Locação', descricao: l.veiculos ? `${l.veiculos.placa} — ${l.veiculos.modelo}` : '—', cliente_nome: l.clientes?.nome,
         valor: l.valor_total, data: l.data_fim_real, forma: '—',
+        conta_id: l.conta_bancaria_id, conta_nome: l.contas_bancarias?.nome_conta,
       })),
     ];
     if (dataInicio) itens = itens.filter(i => i.data && i.data.slice(0, 10) >= dataInicio);
     if (dataFim) itens = itens.filter(i => i.data && i.data.slice(0, 10) <= dataFim);
+    if (contaId) itens = itens.filter(i => String(i.conta_id) === String(contaId));
     return itens.sort((a, b) => (b.data || '').localeCompare(a.data || ''));
   },
 };
