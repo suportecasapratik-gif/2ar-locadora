@@ -517,6 +517,10 @@ const locacoesApi = {
     const { error } = await sb.from('locacoes').update(dados).eq('id', id);
     checarErro(error, 'Erro ao atualizar locação.');
   },
+  async corrigirFinalizada(id, dados) {
+    const { error } = await sb.from('locacoes').update(dados).eq('id', id);
+    checarErro(error, 'Erro ao corrigir locação.');
+  },
 };
 
 // ---------- VENDAS ----------

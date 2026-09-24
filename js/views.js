@@ -682,7 +682,8 @@ async function verParcelas(fiadoId) {
               ${moeda(p.valor)}
               ${p.status === 'pago'
                 ? `<span class="tag tag-quitado">Pago ${dataBr(p.pago_em)}</span><button class="btn-secundario" onclick="formCorrigirValorPago(${p.id}, ${fiadoId})">Corrigir valor pago</button>`
-                : `<button class="btn-secundario" onclick="editarParcela(${p.id}, ${fiadoId})">Editar</button>
+                : `${p.vencimento < hoje ? `<button class="btn-primario" onclick="formRenegociar(${p.id}, ${fiadoId})">Renegociar</button>` : ''}
+                   <button class="btn-secundario" onclick="editarParcela(${p.id}, ${fiadoId})">Editar</button>
                    <button class="btn-secundario" onclick="formPagarParcela(${p.id}, ${fiadoId})">Receber</button>
                    ${Number(p.valor_pago) > 0 ? `<button class="btn-secundario" onclick="formCorrigirValorPago(${p.id}, ${fiadoId})">Corrigir valor pago</button>` : ''}`}
             </span>
@@ -762,6 +763,50 @@ async function formCorrigirValorPago(parcelaId, fiadoId) {
       renderFiado();
     } catch (err) { toast(err.message, true); }
   });
+}
+async function formRenegociar(parcelaId, fiadoId) {
+  const lista = await fiadoApi.listar();
+  const f = lista.find(x => x.id === fiadoId);
+  const p = f?.parcelas.find(x => x.id === parcelaId);
+  if (!p) return;
+  const somarDias = (dias) => {
+    const d = new Date(p.vencimento + 'T00:00:00');
+    d.setDate(d.getDate() + dias);
+    return d.toISOString().slice(0, 10);
+  };
+  abrirModal(`
+    <h2>Renegociar parcela ${p.numero}/${f.total_parcelas}</h2>
+    <p class="sub" style="margin-bottom:12px">${f.cliente_nome} — venceu ${dataBr(p.vencimento)}, valor ${moeda(p.valor - (p.valor_pago || 0))}</p>
+    <div class="modal-acoes" style="justify-content:flex-start; flex-wrap:wrap; margin-bottom:16px">
+      <button class="btn-secundario" onclick="renegociarRapido(${parcelaId}, ${fiadoId}, '${somarDias(7)}')">+7 dias (${dataBr(somarDias(7))})</button>
+      <button class="btn-secundario" onclick="renegociarRapido(${parcelaId}, ${fiadoId}, '${somarDias(15)}')">+15 dias (${dataBr(somarDias(15))})</button>
+      <button class="btn-secundario" onclick="renegociarRapido(${parcelaId}, ${fiadoId}, '${somarDias(30)}')">+30 dias (${dataBr(somarDias(30))})</button>
+    </div>
+    <form id="form-renegociar">
+      <label>Ou escolha outra data<input required id="rn-data" type="date" value="${somarDias(30)}" /></label>
+      <label style="flex-direction:row; align-items:center; gap:8px">
+        <input type="checkbox" id="rn-cascata" style="width:auto" checked /> Empurrar as próximas parcelas junto (mesma diferença de dias)
+      </label>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="verParcelas(${fiadoId})">Cancelar</button>
+        <button type="submit" class="btn-primario">Confirmar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-renegociar').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    await renegociarRapido(parcelaId, fiadoId, document.getElementById('rn-data').value, document.getElementById('rn-cascata').checked);
+  });
+}
+async function renegociarRapido(parcelaId, fiadoId, novaData, cascata = true) {
+  try {
+    const lista = await fiadoApi.listar();
+    const f = lista.find(x => x.id === fiadoId);
+    const p = f?.parcelas.find(x => x.id === parcelaId);
+    await fiadoApi.editarParcela(parcelaId, fiadoId, { valor: p.valor, vencimento: novaData }, cascata);
+    toast('Parcela renegociada.');
+    verParcelas(fiadoId);
+    renderFiado();
+  } catch (err) { toast(err.message, true); }
 }
 async function editarParcela(parcelaId, fiadoId) {
   const lista = await fiadoApi.listar();
@@ -998,6 +1043,7 @@ async function renderLocacoes(busca) {
              <button class="btn-secundario" onclick="finalizarLocacao(${l.id}, ${l.veiculo_id})">Finalizar</button>
              <button class="btn-secundario" onclick="cancelarLocacao(${l.id}, ${l.veiculo_id})">Cancelar</button>`
           : ''}
+          ${l.status === 'finalizada' ? `<button class="btn-secundario" onclick="editarLocacaoFinalizada(${l.id})">Corrigir valor/conta</button>` : ''}
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirLocacao(${l.id})">Excluir</button>` : ''}
         </td>
       </tr>`).join('');
@@ -1034,6 +1080,38 @@ async function editarLocacao(id) {
       } catch (err) { toast(err.message, true); }
     });
   } catch (err) { toast(err.message, true); }
+}
+async function editarLocacaoFinalizada(id) {
+  const lista = await locacoesApi.listar();
+  const l = lista.find(x => x.id === id);
+  if (!l) return;
+  abrirModal(`
+    <h2>Corrigir locação finalizada</h2>
+    <p class="sub" style="margin-bottom:12px">${l.placa} — ${l.modelo} · ${l.cliente_nome}</p>
+    <form id="form-corrigir-locacao">
+      <div class="form-linha">
+        <label>Valor total (R$)<input required id="cl-valor" type="number" step="0.01" value="${l.valor_total || ''}" /></label>
+        <label>Forma de pagamento
+          <select id="cl-forma">${['Dinheiro', 'Pix', 'Cartão', 'Transferência'].map(f => `<option ${f === l.forma_pagamento ? 'selected' : ''}>${f}</option>`).join('')}</select>
+        </label>
+      </div>
+      <label>Conta bancária (MEI/PJ/PF)<select id="cl-conta">${await opcoesContasHtml(l.conta_bancaria_id)}</select></label>
+      <div class="modal-acoes">
+        <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
+        <button type="submit" class="btn-primario">Salvar</button>
+      </div>
+    </form>`);
+  document.getElementById('form-corrigir-locacao').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    try {
+      await locacoesApi.corrigirFinalizada(id, {
+        valor_total: Number(document.getElementById('cl-valor').value),
+        forma_pagamento: document.getElementById('cl-forma').value,
+        conta_bancaria_id: Number(document.getElementById('cl-conta').value) || null,
+      });
+      fecharModal(); toast('Locação corrigida.'); renderLocacoes();
+    } catch (err) { toast(err.message, true); }
+  });
 }
 async function excluirLocacao(id) {
   if (!confirm('Excluir esta locação? Essa ação não pode ser desfeita.')) return;
@@ -1192,6 +1270,7 @@ async function editarVenda(id) {
             </select>
           </label>
         </div>
+        <label>Conta bancária (MEI/PJ/PF)<select id="ev-conta">${await opcoesContasHtml(v.conta_bancaria_id)}</select></label>
         <div class="modal-acoes">
           <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
           <button type="submit" class="btn-primario">Salvar</button>
@@ -1203,6 +1282,7 @@ async function editarVenda(id) {
         await vendasApi.atualizar(id, {
           valor: Number(document.getElementById('ev-valor').value),
           forma_pagamento: document.getElementById('ev-forma').value,
+          conta_bancaria_id: Number(document.getElementById('ev-conta').value) || null,
         });
         fecharModal(); toast('Venda atualizada.'); renderVendas();
       } catch (err) { toast(err.message, true); }
