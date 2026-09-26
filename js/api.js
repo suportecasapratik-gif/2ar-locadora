@@ -267,14 +267,22 @@ const fiadoApi = {
     return lista;
   },
   async criar(dados) {
-    const { data, error } = await sb.from('fiados').insert(dados).select().single();
+    const { entrada, formaEntrada, contaEntrada, dataEntrada, ...resto } = dados;
+    const { data, error } = await sb.from('fiados').insert(resto).select().single();
     checarErro(error, 'Erro ao registrar fiado.');
-    if (dados.veiculo_id) await marcarVeiculoFiado(dados.veiculo_id);
+    if (resto.veiculo_id) await marcarVeiculoFiado(resto.veiculo_id);
+    if (Number(entrada) > 0) {
+      await fiadoApi.registrarPagamento(data.id, Number(entrada), formaEntrada, contaEntrada, dataEntrada);
+    }
     return data;
   },
   // Cria um fiado já com N parcelas geradas (mensal, a partir da primeira data).
-  async criarComParcelas({ cliente_id, descricao, veiculo_id, numero_parcelas, valor_parcela, primeira_data, criado_por }) {
-    const valorTotal = numero_parcelas * valor_parcela;
+  // Se houver entrada, ela entra como "parcela 0", já paga, com sua própria
+  // forma/conta/data — e cai automaticamente no extrato de Movimentações.
+  async criarComParcelas({ cliente_id, descricao, veiculo_id, numero_parcelas, valor_parcela, primeira_data, criado_por, entrada, formaEntrada, contaEntrada, dataEntrada }) {
+    const valorEntrada = Number(entrada) || 0;
+    const valorTotal = valorEntrada + numero_parcelas * valor_parcela;
+    const hoje = new Date().toISOString().slice(0, 10);
     const { data: fiado, error: e1 } = await sb
       .from('fiados')
       .insert({ cliente_id, descricao, veiculo_id: veiculo_id || null, valor_total: valorTotal, vencimento: primeira_data, criado_por })
@@ -282,6 +290,14 @@ const fiadoApi = {
     checarErro(e1, 'Erro ao registrar fiado.');
 
     const parcelas = [];
+    if (valorEntrada > 0) {
+      const dataPagaEntrada = dataEntrada || hoje;
+      parcelas.push({
+        fiado_id: fiado.id, numero: 0, valor: valorEntrada, valor_pago: valorEntrada,
+        vencimento: dataPagaEntrada, status: 'pago', pago_em: dataPagaEntrada, ultimo_pagamento_em: dataPagaEntrada,
+        forma_pagamento: formaEntrada || null, conta_bancaria_id: contaEntrada || null, registrado_por: criado_por,
+      });
+    }
     for (let i = 0; i < numero_parcelas; i++) {
       const d = new Date(primeira_data + 'T00:00:00');
       d.setMonth(d.getMonth() + i);
@@ -536,14 +552,29 @@ const vendasApi = {
     }));
   },
   async criar(dados) {
-    const { data: veiculo, error: eV } = await sb.from('veiculos').select('status').eq('id', dados.veiculo_id).single();
+    const { entrada, valorTotalVeiculo, criado_por, ...resto } = dados;
+    const { data: veiculo, error: eV } = await sb.from('veiculos').select('status,placa,modelo').eq('id', resto.veiculo_id).single();
     checarErro(eV, 'Veículo não encontrado.');
-    if (veiculo.status === 'vendido') throw new Error('Este veículo já foi vendido.');
+    if (veiculo.status !== 'disponivel') throw new Error('Este veículo não está disponível para venda.');
 
-    const { data, error } = await sb.from('vendas').insert(dados).select().single();
+    const valorEntrada = entrada != null ? Number(entrada) : Number(resto.valor);
+    const total = valorTotalVeiculo != null ? Number(valorTotalVeiculo) : Number(resto.valor);
+    const restante = total - valorEntrada;
+
+    const { data, error } = await sb.from('vendas').insert({ ...resto, valor: valorEntrada, criado_por }).select().single();
     checarErro(error, 'Erro ao registrar venda.');
-    const { error: eU } = await sb.from('veiculos').update({ status: 'vendido' }).eq('id', dados.veiculo_id);
+    const { error: eU } = await sb.from('veiculos').update({ status: 'vendido' }).eq('id', resto.veiculo_id);
     checarErro(eU, 'Venda criada, mas o status do veículo não pôde ser atualizado.');
+
+    if (restante > 0.005) {
+      await fiadoApi.criar({
+        cliente_id: resto.cliente_id,
+        descricao: `Restante da venda — ${veiculo.placa} ${veiculo.modelo}`,
+        valor_total: restante,
+        vencimento: null,
+        criado_por,
+      });
+    }
     return data;
   },
   async excluir(id) {

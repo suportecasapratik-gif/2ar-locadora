@@ -903,8 +903,25 @@ async function formFiado() {
         </select>
       </label>
       <label>Descrição<input required id="f-desc" placeholder="Ex: peças, manutenção, acessórios..." /></label>
+
       <label style="flex-direction:row; align-items:center; gap:8px">
-        <input type="checkbox" id="f-tem-parcelas" style="width:auto" /> Dividir em parcelas
+        <input type="checkbox" id="f-tem-entrada" style="width:auto" /> Teve entrada
+      </label>
+      <div id="f-bloco-entrada" class="oculto">
+        <div class="form-linha">
+          <label>Valor da entrada (R$)<input id="f-entrada-valor" type="number" step="0.01" /></label>
+          <label>Data da entrada<input id="f-entrada-data" type="date" value="${new Date().toISOString().slice(0, 10)}" /></label>
+        </div>
+        <div class="form-linha">
+          <label>Forma de pagamento da entrada
+            <select id="f-entrada-forma"><option>Dinheiro</option><option>Pix</option><option>Cartão</option><option>Transferência</option></select>
+          </label>
+          <label>Conta bancária (MEI/PJ/PF)<select id="f-entrada-conta">${await opcoesContasHtml()}</select></label>
+        </div>
+      </div>
+
+      <label style="flex-direction:row; align-items:center; gap:8px">
+        <input type="checkbox" id="f-tem-parcelas" style="width:auto" /> Dividir o restante em parcelas
       </label>
 
       <div id="f-bloco-simples">
@@ -940,6 +957,9 @@ async function formFiado() {
     document.getElementById('f-valor-parcela').required = checkParcelas.checked;
     document.getElementById('f-primeira-data').required = checkParcelas.checked;
   });
+  const checkEntrada = document.getElementById('f-tem-entrada');
+  const blocoEntrada = document.getElementById('f-bloco-entrada');
+  checkEntrada.addEventListener('change', () => blocoEntrada.classList.toggle('oculto', !checkEntrada.checked));
   const atualizarResumo = () => {
     const n = Number(document.getElementById('f-num-parcelas').value) || 0;
     const v = Number(document.getElementById('f-valor-parcela').value) || 0;
@@ -953,10 +973,16 @@ async function formFiado() {
     const cliente_id = Number(document.getElementById('f-cliente').value);
     const descricao = document.getElementById('f-desc').value.trim();
     const veiculo_id = Number(document.getElementById('f-veiculo').value) || null;
+    const dadosEntrada = checkEntrada.checked ? {
+      entrada: Number(document.getElementById('f-entrada-valor').value) || 0,
+      formaEntrada: document.getElementById('f-entrada-forma').value,
+      contaEntrada: document.getElementById('f-entrada-conta').value || null,
+      dataEntrada: document.getElementById('f-entrada-data').value,
+    } : {};
     try {
       if (checkParcelas.checked) {
         await fiadoApi.criarComParcelas({
-          cliente_id, descricao, veiculo_id,
+          cliente_id, descricao, veiculo_id, ...dadosEntrada,
           numero_parcelas: Number(document.getElementById('f-num-parcelas').value),
           valor_parcela: Number(document.getElementById('f-valor-parcela').value),
           primeira_data: document.getElementById('f-primeira-data').value,
@@ -964,7 +990,7 @@ async function formFiado() {
         });
       } else {
         await fiadoApi.criar({
-          cliente_id, descricao, veiculo_id,
+          cliente_id, descricao, veiculo_id, ...dadosEntrada,
           valor_total: Number(document.getElementById('f-valor').value),
           vencimento: document.getElementById('f-venc').value || null,
           criado_por: PERFIL.id,
@@ -1016,7 +1042,7 @@ async function carregarLocacoes() {
       <button class="btn-primario" id="btn-nova-locacao">+ Nova locação</button>
     </div>
     <div class="toolbar"><input type="text" id="busca-locacao" placeholder="Buscar por cliente ou placa..." /></div>
-    <div class="tabela-wrap"><table><thead><tr><th>Veículo</th><th>Cliente</th><th>Início</th><th>Fim previsto</th><th>Diária</th><th>Status</th><th></th></tr></thead><tbody id="tbody-locacoes"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Veículo</th><th>Cliente</th><th>Início</th><th>Fim previsto</th><th>Diária</th><th>Status</th><th></th></tr></thead><tbody id="tbody-locacoes"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
@@ -1032,10 +1058,13 @@ async function renderLocacoes(busca) {
       lista = lista.filter(l => l.cliente_nome?.toLowerCase().includes(termo) || l.placa?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-locacoes');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhuma locação encontrada.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="8" class="vazio">Nenhuma locação encontrada.</td></tr>`; return; }
     tbody.innerHTML = lista.map(l => `
       <tr>
-        <td>${l.placa} — ${l.modelo}</td><td>${l.cliente_nome}</td><td>${dataBr(l.data_inicio)}</td>
+        <td>${l.cliente_foto ? `<img src="${l.cliente_foto}" alt="${l.cliente_nome}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
+        <td>${l.placa} — ${l.modelo}</td>
+        <td>${l.cliente_nome} ${botaoWhats(l.cliente_telefone)}</td>
+        <td>${dataBr(l.data_inicio)}</td>
         <td>${dataBr(l.data_fim_prevista)}</td><td>${moeda(l.valor_diaria)}</td>
         <td><span class="tag tag-${statusExibicaoLocacao(l)}">${rotuloStatusLocacao(statusExibicaoLocacao(l))}</span></td>
         <td>${l.status === 'ativa'
@@ -1226,7 +1255,7 @@ async function carregarVendas() {
       <button class="btn-primario" id="btn-nova-venda">+ Nova venda</button>
     </div>
     <div class="toolbar"><input type="text" id="busca-venda" placeholder="Buscar por cliente ou placa..." /></div>
-    <div class="tabela-wrap"><table><thead><tr><th>Veículo</th><th>Cliente</th><th>Valor</th><th>Forma</th><th>Data</th><th></th></tr></thead><tbody id="tbody-vendas"></tbody></table></div>
+    <div class="tabela-wrap"><table><thead><tr><th>Foto</th><th>Veículo</th><th>Cliente</th><th>Valor</th><th>Forma</th><th>Data</th><th></th></tr></thead><tbody id="tbody-vendas"></tbody></table></div>
   `;
   if (!CACHE_CLIENTES.length) await clientesApi.listar().then(l => CACHE_CLIENTES = l);
   await veiculosApi.listar().then(l => CACHE_VEICULOS = l);
@@ -1242,10 +1271,13 @@ async function renderVendas(busca) {
       lista = lista.filter(v => v.cliente_nome?.toLowerCase().includes(termo) || v.placa?.toLowerCase().includes(termo));
     }
     const tbody = document.getElementById('tbody-vendas');
-    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="6" class="vazio">Nenhuma venda encontrada.</td></tr>`; return; }
+    if (!lista.length) { tbody.innerHTML = `<tr><td colspan="7" class="vazio">Nenhuma venda encontrada.</td></tr>`; return; }
     tbody.innerHTML = lista.map(v => `
       <tr>
-        <td>${v.placa} — ${v.modelo}</td><td>${v.cliente_nome}</td><td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td>
+        <td>${v.cliente_foto ? `<img src="${v.cliente_foto}" alt="${v.cliente_nome}" class="thumb-veiculo" />` : '<span class="sub">sem foto</span>'}</td>
+        <td>${v.placa} — ${v.modelo}</td>
+        <td>${v.cliente_nome} ${botaoWhats(v.cliente_telefone)}</td>
+        <td>${moeda(v.valor)}</td><td>${v.forma_pagamento || '—'}</td><td>${dataBr(v.data_venda)}</td>
         <td>
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="editarVenda(${v.id})">Editar</button>` : ''}
           ${PERFIL.papel === 'admin' ? `<button class="btn-secundario" onclick="excluirVenda(${v.id})">Excluir</button>` : ''}
@@ -1306,12 +1338,17 @@ async function formVenda() {
       <label>Veículo<select required id="vd-veiculo">${opcoesVeiculos(disponiveis)}</select></label>
       <label>Cliente<select required id="vd-cliente">${opcoesClientes()}</select></label>
       <div class="form-linha">
-        <label>Valor (R$)<input required id="vd-valor" type="number" step="0.01" /></label>
+        <label>Valor total do veículo (R$)<input required id="vd-total" type="number" step="0.01" /></label>
+        <label>Valor recebido agora (entrada) (R$)<input required id="vd-valor" type="number" step="0.01" /></label>
+      </div>
+      <p class="sub" id="vd-resumo-restante" style="margin:-6px 0 0"></p>
+      <div class="form-linha">
         <label>Forma de pagamento
           <select id="vd-forma"><option>À vista</option><option>Financiado</option><option>Pix</option><option>Cartão</option></select>
         </label>
+        <label>Conta bancária (MEI/PJ/PF)<select id="vd-conta">${await opcoesContasHtml()}</select></label>
       </div>
-      <label>Conta bancária<select id="vd-conta">${await opcoesContasHtml()}</select></label>
+      <p class="sub" style="margin-top:-6px">Se o valor recebido for menor que o total, o restante vira automaticamente um Fiado pra esse cliente (aparece na aba Fiado, com veículo já vinculado).</p>
       <div class="modal-acoes">
         <button type="button" class="btn-secundario" onclick="fecharModal()">Cancelar</button>
         <button type="submit" class="btn-primario">Registrar</button>
@@ -1320,16 +1357,26 @@ async function formVenda() {
   const vSel = document.getElementById('vd-veiculo');
   const preencherValor = () => {
     const v = disponiveis.find(x => x.id == vSel.value);
-    if (v?.valor_venda) document.getElementById('vd-valor').value = v.valor_venda;
+    if (v?.valor_venda) { document.getElementById('vd-total').value = v.valor_venda; document.getElementById('vd-valor').value = v.valor_venda; }
+    atualizarRestante();
+  };
+  const atualizarRestante = () => {
+    const total = Number(document.getElementById('vd-total').value) || 0;
+    const recebido = Number(document.getElementById('vd-valor').value) || 0;
+    const restante = total - recebido;
+    document.getElementById('vd-resumo-restante').textContent = restante > 0.004 ? `Restante que vira fiado: ${moeda(restante)}` : (total ? 'Pagamento à vista — sem restante.' : '');
   };
   vSel.addEventListener('change', preencherValor);
+  document.getElementById('vd-total').addEventListener('input', atualizarRestante);
+  document.getElementById('vd-valor').addEventListener('input', atualizarRestante);
   preencherValor();
   document.getElementById('form-venda').addEventListener('submit', async (e) => {
     e.preventDefault();
     const dados = {
       veiculo_id: Number(document.getElementById('vd-veiculo').value),
       cliente_id: Number(document.getElementById('vd-cliente').value),
-      valor: Number(document.getElementById('vd-valor').value),
+      valorTotalVeiculo: Number(document.getElementById('vd-total').value),
+      entrada: Number(document.getElementById('vd-valor').value),
       forma_pagamento: document.getElementById('vd-forma').value,
       conta_bancaria_id: Number(document.getElementById('vd-conta').value) || null,
       criado_por: PERFIL.id,
