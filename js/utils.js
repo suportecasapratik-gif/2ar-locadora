@@ -49,3 +49,9 @@ function exportarCSV(nomeArquivo, colunas, linhas) {
   a.click();
   URL.revokeObjectURL(url);
 }
+
+// Escapa texto digitado pelo usuário antes de colocar dentro de HTML/atributos.
+function esc(v) {
+  return String(v ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}

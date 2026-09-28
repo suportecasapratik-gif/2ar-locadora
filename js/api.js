@@ -401,15 +401,22 @@ const fiadoApi = {
   },
   // Corrige o valor JÁ PAGO de uma parcela (não soma, substitui) — pra quando
   // o valor foi digitado errado num pagamento anterior.
-  async corrigirValorPago(parcelaId, fiadoId, novoValorPago) {
+  async corrigirValorPago(parcelaId, fiadoId, novoValorPago, extras = {}) {
     const { data: parcela, error: e0 } = await sb.from('fiado_parcelas').select('valor, pago_em').eq('id', parcelaId).single();
     checarErro(e0, 'Erro ao localizar a parcela.');
     const hoje = new Date().toISOString().slice(0, 10);
     const quitada = novoValorPago >= Number(parcela.valor) - 0.005;
+    const { formaPagamento, contaId, dataPagamento } = extras;
 
     const { error: e1 } = await sb
       .from('fiado_parcelas')
-      .update({ valor_pago: novoValorPago, status: quitada ? 'pago' : 'pendente', pago_em: quitada ? (parcela.pago_em || hoje) : null })
+      .update({
+        valor_pago: novoValorPago, status: quitada ? 'pago' : 'pendente',
+        pago_em: quitada ? (dataPagamento || parcela.pago_em || hoje) : null,
+        ...(dataPagamento ? { ultimo_pagamento_em: dataPagamento } : {}),
+        ...(formaPagamento !== undefined ? { forma_pagamento: formaPagamento || null } : {}),
+        ...(contaId !== undefined ? { conta_bancaria_id: contaId || null } : {}),
+      })
       .eq('id', parcelaId);
     checarErro(e1, 'Erro ao corrigir o valor pago.');
 
@@ -426,6 +433,32 @@ const fiadoApi = {
     const { error: e3 } = await sb.from('fiados').update({ status: novoStatus, vencimento: proxima?.vencimento || null }).eq('id', fiadoId);
     checarErro(e3, 'Valor corrigido, mas o status do fiado não pôde ser atualizado.');
     if (novoStatus === 'quitado') await liberarVeiculoSeQuitado(fiadoId);
+  },
+  // Descrição/observação de uma parcela específica.
+  async anotarParcela(parcelaId, texto) {
+    const { error } = await sb.from('fiado_parcelas').update({ observacoes: texto || null }).eq('id', parcelaId);
+    checarErro(error, 'Erro ao salvar a descrição da parcela.');
+  },
+  // Pagamentos "livres" (fiado sem parcelas) — listar e editar individualmente.
+  async listarPagamentos(fiadoId) {
+    const { data, error } = await sb.from('fiado_pagamentos').select('*').eq('fiado_id', fiadoId).order('data_pagamento', { ascending: false });
+    checarErro(error, 'Erro ao carregar pagamentos.');
+    return data || [];
+  },
+  async editarPagamento(pagamentoId, fiadoId, { valor, forma_pagamento, conta_bancaria_id, data_pagamento }) {
+    const { error: e1 } = await sb
+      .from('fiado_pagamentos')
+      .update({ valor, forma_pagamento: forma_pagamento || null, conta_bancaria_id: conta_bancaria_id || null, data_pagamento: data_pagamento ? data_pagamento + 'T12:00:00' : undefined })
+      .eq('id', pagamentoId);
+    checarErro(e1, 'Erro ao editar pagamento.');
+    const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
+    checarErro(e2, 'Pagamento editado, mas o status não pôde ser recalculado.');
+  },
+  async excluirPagamento(pagamentoId, fiadoId) {
+    const { error: e1 } = await sb.from('fiado_pagamentos').delete().eq('id', pagamentoId);
+    checarErro(e1, 'Erro ao excluir pagamento.');
+    const { error: e2 } = await sb.rpc('recalcular_status_fiado', { p_fiado_id: fiadoId });
+    checarErro(e2, 'Pagamento excluído, mas o status não pôde ser recalculado.');
   },
   async excluir(id) {
     const { data: fiado } = await sb.from('fiados').select('veiculo_id, status').eq('id', id).single();
@@ -626,34 +659,36 @@ const contasApi = {
 // locações finalizadas — tudo que já é dinheiro entrando.
 const movimentacoesApi = {
   async listar(dataInicio, dataFim, contaId) {
-    const [{ data: pagamentos, error: e1 }, { data: parcelas, error: e2 }, { data: vendas, error: e3 }, { data: locacoes, error: e4 }] = await Promise.all([
-      sb.from('fiado_pagamentos').select('id,valor,data_pagamento,forma_pagamento,conta_bancaria_id, fiados(descricao, clientes(nome,telefone,foto_url)), contas_bancarias(nome_conta)').order('data_pagamento', { ascending: false }),
-      sb.from('fiado_parcelas').select('id,valor_pago,ultimo_pagamento_em,forma_pagamento,conta_bancaria_id,numero, fiados(descricao, clientes(nome,telefone,foto_url)), contas_bancarias(nome_conta)').gt('valor_pago', 0).order('ultimo_pagamento_em', { ascending: false }),
-      sb.from('vendas').select('id,valor,data_venda,forma_pagamento,conta_bancaria_id, clientes(nome,telefone,foto_url), veiculos(placa,modelo), contas_bancarias(nome_conta)').order('data_venda', { ascending: false }),
-      sb.from('locacoes').select('id,valor_total,data_fim_real,forma_pagamento,conta_bancaria_id, clientes(nome,telefone,foto_url), veiculos(placa,modelo), contas_bancarias(nome_conta)').eq('status', 'finalizada').not('valor_total', 'is', null).order('data_fim_real', { ascending: false }),
+    const [{ data: pagamentos, error: e1 }, { data: parcelas, error: e2 }, { data: vendas, error: e3 }, { data: locacoes, error: e4 }, contas] = await Promise.all([
+      sb.from('fiado_pagamentos').select('id,valor,data_pagamento,forma_pagamento,conta_bancaria_id, fiados(descricao, clientes(nome,telefone,foto_url))').order('data_pagamento', { ascending: false }),
+      sb.from('fiado_parcelas').select('id,valor_pago,ultimo_pagamento_em,forma_pagamento,conta_bancaria_id,numero, fiados(descricao, clientes(nome,telefone,foto_url))').gt('valor_pago', 0).order('ultimo_pagamento_em', { ascending: false }),
+      sb.from('vendas').select('id,valor,data_venda,forma_pagamento,conta_bancaria_id, clientes(nome,telefone,foto_url), veiculos(placa,modelo)').order('data_venda', { ascending: false }),
+      sb.from('locacoes').select('id,valor_total,data_fim_real,forma_pagamento,conta_bancaria_id, clientes(nome,telefone,foto_url), veiculos(placa,modelo)').eq('status', 'finalizada').not('valor_total', 'is', null).order('data_fim_real', { ascending: false }),
+      contasApi.listar(),
     ]);
     checarErro(e1 || e2 || e3 || e4, 'Erro ao carregar movimentações.');
+    const nomeConta = (id) => contas.find(c => c.id === id)?.nome_conta;
 
     let itens = [
       ...(pagamentos || []).map(p => ({
         tipo: 'Fiado', descricao: p.fiados?.descricao || '—', cliente_nome: p.fiados?.clientes?.nome,
         valor: p.valor, data: p.data_pagamento, forma: p.forma_pagamento,
-        conta_id: p.conta_bancaria_id, conta_nome: p.contas_bancarias?.nome_conta,
+        conta_id: p.conta_bancaria_id, conta_nome: nomeConta(p.conta_bancaria_id),
       })),
       ...(parcelas || []).map(p => ({
         tipo: 'Fiado (parcela)', descricao: `${p.fiados?.descricao || '—'} (parcela ${p.numero})`, cliente_nome: p.fiados?.clientes?.nome,
         valor: p.valor_pago, data: p.ultimo_pagamento_em, forma: p.forma_pagamento,
-        conta_id: p.conta_bancaria_id, conta_nome: p.contas_bancarias?.nome_conta,
+        conta_id: p.conta_bancaria_id, conta_nome: nomeConta(p.conta_bancaria_id),
       })),
       ...(vendas || []).map(v => ({
         tipo: 'Venda', descricao: v.veiculos ? `${v.veiculos.placa} — ${v.veiculos.modelo}` : '—', cliente_nome: v.clientes?.nome,
         valor: v.valor, data: v.data_venda, forma: v.forma_pagamento,
-        conta_id: v.conta_bancaria_id, conta_nome: v.contas_bancarias?.nome_conta,
+        conta_id: v.conta_bancaria_id, conta_nome: nomeConta(v.conta_bancaria_id),
       })),
       ...(locacoes || []).map(l => ({
         tipo: 'Locação', descricao: l.veiculos ? `${l.veiculos.placa} — ${l.veiculos.modelo}` : '—', cliente_nome: l.clientes?.nome,
         valor: l.valor_total, data: l.data_fim_real, forma: l.forma_pagamento || '—',
-        conta_id: l.conta_bancaria_id, conta_nome: l.contas_bancarias?.nome_conta,
+        conta_id: l.conta_bancaria_id, conta_nome: nomeConta(l.conta_bancaria_id),
       })),
     ];
     if (dataInicio) itens = itens.filter(i => i.data && i.data.slice(0, 10) >= dataInicio);
